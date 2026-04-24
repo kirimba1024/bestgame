@@ -16,8 +16,36 @@ final class GameMTKView: MTKView {
         l.lineBreakMode = .byWordWrapping
         return l
     }()
+
+    /// Подписи к мировым осям (рядом с Metal-gizmo внизу слева).
+    private lazy var axisLegendStack: NSStackView = {
+        func legend(_ letter: String, color: NSColor) -> NSTextField {
+            let t = NSTextField(labelWithString: letter)
+            t.font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
+            t.textColor = color
+            t.backgroundColor = NSColor.black.withAlphaComponent(0.5)
+            t.isBordered = false
+            t.wantsLayer = true
+            t.layer?.cornerRadius = 3
+            t.alignment = .center
+            t.setContentHuggingPriority(.required, for: .horizontal)
+            return t
+        }
+        let s = NSStackView(views: [
+            legend("X", color: NSColor(calibratedRed: 1, green: 0.25, blue: 0.25, alpha: 1)),
+            legend("Y", color: NSColor(calibratedRed: 0.35, green: 0.95, blue: 0.35, alpha: 1)),
+            legend("Z", color: NSColor(calibratedRed: 0.35, green: 0.45, blue: 1, alpha: 1)),
+        ])
+        s.orientation = .horizontal
+        s.spacing = 6
+        s.translatesAutoresizingMaskIntoConstraints = false
+        return s
+    }()
     var isHUDEnabled: Bool = true {
-        didSet { hudLabel.isHidden = !isHUDEnabled }
+        didSet {
+            hudLabel.isHidden = !isHUDEnabled
+            axisLegendStack.isHidden = !isHUDEnabled
+        }
     }
 
     private var keyDownMonitor: Any?
@@ -107,10 +135,14 @@ final class GameMTKView: MTKView {
     private func installHUDIfNeeded() {
         guard hudLabel.superview == nil else { return }
         addSubview(hudLabel)
+        addSubview(axisLegendStack)
         hudLabel.isHidden = !isHUDEnabled
+        axisLegendStack.isHidden = !isHUDEnabled
         NSLayoutConstraint.activate([
             hudLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             hudLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            axisLegendStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            axisLegendStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
     }
 

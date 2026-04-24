@@ -24,7 +24,7 @@ enum GLTFPrimitives {
 
         let normals: [SIMD3<Float>]
         if let norAcc = prim.attributes["NORMAL"] {
-            normals = try GLTFAccessors.readVec3Float(gltf: gltf, accessorIndex: norAcc, bin: bin)
+            normals = try GLTFAccessors.readVec3Normalized(gltf: gltf, accessorIndex: norAcc, bin: bin)
             guard normals.count == positions.count else {
                 throw GLBLoaderError.invalidChunk
             }
@@ -57,7 +57,7 @@ enum GLTFPrimitives {
             verts.append(.init(position: positions[i], normal: normals[i], uv: uvs[i]))
         }
 
-        let mat = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim, bin: bin)
+        let mat = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim, bin: bin, bundle: .main)
         return StaticPrimitiveData(vertices: verts, indices: indices, material: mat)
     }
 }

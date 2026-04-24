@@ -53,6 +53,24 @@ extension simd_float4x4 {
         )
     }
 
+    /// Right-handed orthographic projection, Metal depth 0..1.
+    static func orthographicRH(left: Float, right: Float, bottom: Float, top: Float, nearZ: Float, farZ: Float) -> simd_float4x4 {
+        // Maps view-space z in [-nearZ, -farZ] to depth [0, 1] (Metal).
+        // RH: camera looks down -Z.
+        let rml = right - left
+        let tmb = top - bottom
+        let n = nearZ
+        let f = farZ
+        let invFN = 1.0 / (n - f)
+
+        return simd_float4x4(
+            SIMD4<Float>(2 / rml, 0, 0, 0),
+            SIMD4<Float>(0, 2 / tmb, 0, 0),
+            SIMD4<Float>(0, 0, invFN, 0),
+            SIMD4<Float>(-(right + left) / rml, -(top + bottom) / tmb, n * invFN, 1)
+        )
+    }
+
     static func lookAtRH(eye: SIMD3<Float>, forward: SIMD3<Float>, upHint: SIMD3<Float> = SIMD3<Float>(0, 1, 0)) -> simd_float4x4 {
         let f = normalize(forward)
         let r = normalize(cross(f, upHint))

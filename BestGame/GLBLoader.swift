@@ -151,10 +151,20 @@ final class GLBLoader {
         let weightsAcc = prim0.attributes["WEIGHTS_0"]
 
         let positions = try GLTFAccessors.readVec3Float(gltf: gltf, accessorIndex: posAcc, bin: bin)
-        let normals = try (norAcc != nil ? GLTFAccessors.readVec3Float(gltf: gltf, accessorIndex: norAcc!, bin: bin) : Array(repeating: SIMD3<Float>(0, 1, 0), count: positions.count))
+        let normals = try (norAcc != nil ? GLTFAccessors.readVec3Normalized(gltf: gltf, accessorIndex: norAcc!, bin: bin) : Array(repeating: SIMD3<Float>(0, 1, 0), count: positions.count))
         let uvs = try (uvAcc != nil ? GLTFAccessors.readVec2Float(gltf: gltf, accessorIndex: uvAcc!, bin: bin) : Array(repeating: SIMD2<Float>(0, 0), count: positions.count))
         let joints = try (jointsAcc != nil ? GLTFAccessors.readVec4U16(gltf: gltf, accessorIndex: jointsAcc!, bin: bin) : Array(repeating: SIMD4<UInt16>(0, 0, 0, 0), count: positions.count))
         var weights = try (weightsAcc != nil ? GLTFAccessors.readVec4Float(gltf: gltf, accessorIndex: weightsAcc!, bin: bin) : Array(repeating: SIMD4<Float>(1, 0, 0, 0), count: positions.count))
+        // Defensive: all vertex attribute arrays must match vertex count.
+        guard
+            !positions.isEmpty,
+            normals.count == positions.count,
+            uvs.count == positions.count,
+            joints.count == positions.count,
+            weights.count == positions.count
+        else {
+            throw GLBLoaderError.invalidChunk
+        }
         // Ensure weights are normalized (defensive; glTF expects normalized weights).
         weights = weights.map { w in
             let s = max(1e-8, w.x + w.y + w.z + w.w)
@@ -184,17 +194,29 @@ final class GLBLoader {
         guard skinIndex < skins.count else { throw GLBLoaderError.invalidChunk }
         let skin = skins[skinIndex]
         let jointNodes = skin.joints
+        // Defensive: joint indices must be valid node indices.
+        guard jointNodes.allSatisfy({ $0 >= 0 && $0 < nodes.count }) else { throw GLBLoaderError.invalidChunk }
         let invBind: [simd_float4x4]
         if let invAcc = skin.inverseBindMatrices {
             invBind = try GLTFAccessors.readMat4Float(gltf: gltf, accessorIndex: invAcc, bin: bin)
         } else {
             invBind = Array(repeating: matrix_identity_float4x4, count: jointNodes.count)
         }
+        guard invBind.count == jointNodes.count else { throw GLBLoaderError.invalidChunk }
+
+        // Vertex joint indices must refer to palette entries [0, jointCount).
+        let jointPalette = jointNodes.count
+        guard jointPalette > 0 else { throw GLBLoaderError.invalidChunk }
+        for jw in joints {
+            if Int(jw.x) >= jointPalette || Int(jw.y) >= jointPalette || Int(jw.z) >= jointPalette || Int(jw.w) >= jointPalette {
+                throw GLBLoaderError.invalidChunk
+            }
+        }
 
         // Animation (take first)
         let animation = try GLTFAnimationParser.parseFirstAnimation(gltf: gltf, bin: bin)
 
-        let material = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim0, bin: bin)
+        let material = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim0, bin: bin, bundle: .main)
 
         return GLBSkinnedModel(
             vertices: verts,

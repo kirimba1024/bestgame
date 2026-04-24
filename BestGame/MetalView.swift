@@ -19,7 +19,8 @@ struct MetalView: NSViewRepresentable {
         }
 
         view.device = device
-        view.colorPixelFormat = .bgra8Unorm
+        // Render in linear, present in sRGB for correct display.
+        view.colorPixelFormat = .bgra8Unorm_srgb
         view.depthStencilPixelFormat = .depth32Float
         view.clearColor = clearColor
         view.clearDepth = 1.0
@@ -29,6 +30,7 @@ struct MetalView: NSViewRepresentable {
         view.presentsWithTransaction = false
 
         view.delegate = context.coordinator
+        context.coordinator.hudSink = view
         view.inputChanged = { input in
             context.coordinator.updateInput(input)
         }

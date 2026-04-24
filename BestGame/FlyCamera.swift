@@ -7,7 +7,7 @@ final class FlyCamera {
     var pitch: Float = 0
 
     var mouseSensitivity: Float = 0.003
-    var baseMoveSpeed: Float = 4.0
+    var baseMoveSpeed: Float = 12.0
 
     func update(dt: Float, input: InputState) {
         yaw += Float(input.mouseDelta.x) * mouseSensitivity

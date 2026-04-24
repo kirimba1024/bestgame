@@ -13,12 +13,28 @@ struct GLTF: Decodable {
     }
 
     struct Accessor: Decodable {
+        struct Sparse: Decodable {
+            struct Indices: Decodable {
+                var bufferView: Int
+                var byteOffset: Int?
+                var componentType: Int
+            }
+            struct Values: Decodable {
+                var bufferView: Int
+                var byteOffset: Int?
+            }
+            var count: Int
+            var indices: Indices
+            var values: Values
+        }
+
         var bufferView: Int?
         var byteOffset: Int?
         var componentType: Int
         var count: Int
         var type: String
         var normalized: Bool?
+        var sparse: Sparse?
     }
 
     struct Primitive: Decodable {

@@ -2,6 +2,7 @@ import Metal
 import MetalKit
 import simd
 
+/// Статический glTF mesh с PBR и отдельным depth-only проходом для карты теней.
 final class StaticModelRenderer {
     enum DebugOptions {
         /// When enabled, expands indexed triangles into a non-indexed buffer and uses `drawPrimitives`.
@@ -14,10 +15,18 @@ final class StaticModelRenderer {
         var view: simd_float4x4
         var cameraPosWS: SIMD3<Float>
         var model: simd_float4x4
+        var lightViewProj: simd_float4x4
+        var keyLight: SceneLighting.KeyLightFrame
+        var shadowTexture: MTLTexture?
+        var shadowSampler: MTLSamplerState?
+        var debugMode: UInt32 = 0
     }
 
     private let pipeline: MTLRenderPipelineState
+    private let shadowPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
+    private let environment: EnvironmentMap
+    let localBounds: (min: SIMD3<Float>, max: SIMD3<Float>)
 
     private struct Submesh {
         var vertexBuffer: MTLBuffer
@@ -34,7 +43,17 @@ final class StaticModelRenderer {
 
     private let submeshes: [Submesh]
 
-    init(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat, depthPixelFormat: MTLPixelFormat, model: GLBStaticModel) {
+    // MARK: - Life cycle
+
+    init(
+        device: MTLDevice,
+        library: MTLLibrary,
+        colorPixelFormat: MTLPixelFormat,
+        depthPixelFormat: MTLPixelFormat,
+        model: GLBStaticModel,
+        environment: EnvironmentMap
+    ) {
+        self.environment = environment
         guard let vs = library.makeFunction(name: "vertex_static_pbr"),
               let fs = library.makeFunction(name: "fragment_pbr_mr")
         else { fatalError("Missing PBR shaders.") }
@@ -72,6 +91,18 @@ final class StaticModelRenderer {
             fatalError("Failed to create PBR pipeline: \(error)")
         }
 
+        // Depth-only shadow pipeline (directional shadow map).
+        do {
+            let spd = MTLRenderPipelineDescriptor()
+            spd.vertexFunction = library.makeFunction(name: "vertex_shadow_static")
+            spd.fragmentFunction = nil
+            spd.vertexDescriptor = vd
+            spd.depthAttachmentPixelFormat = .depth32Float
+            shadowPipeline = try device.makeRenderPipelineState(descriptor: spd)
+        } catch {
+            fatalError("Failed to create static shadow pipeline: \(error)")
+        }
+
         let sd = MTLSamplerDescriptor()
         sd.minFilter = .linear
         sd.magFilter = .linear
@@ -85,7 +116,13 @@ final class StaticModelRenderer {
         let loader = MTKTextureLoader(device: device)
         var built: [Submesh] = []
         built.reserveCapacity(model.primitives.count)
+        var bmin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var bmax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         for prim in model.primitives {
+            for v in prim.vertices {
+                bmin = simd_min(bmin, v.position)
+                bmax = simd_max(bmax, v.position)
+            }
             let verts: [GPUVertex] = prim.vertices.map {
                 GPUVertex(
                     position: SIMD4<Float>($0.position.x, $0.position.y, $0.position.z, 1),
@@ -132,10 +169,14 @@ final class StaticModelRenderer {
             ))
         }
         self.submeshes = built
+        self.localBounds = (min: bmin, max: bmax)
     }
+
+    // MARK: - Drawing
 
     func draw(encoder: MTLRenderCommandEncoder, params: DrawParams) {
         let mvp = params.proj * params.view * params.model
+        let normalMatrix = params.model.inverse.transpose
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
 
@@ -143,11 +184,15 @@ final class StaticModelRenderer {
             var u = PBRTypes.Uniforms(
                 mvp: mvp,
                 model: params.model,
+                normalMatrix: normalMatrix,
+                lightViewProj: params.lightViewProj,
                 cameraPosWS: params.cameraPosWS,
                 jointCount: 0,
                 baseColorFactor: sm.baseColorFactor,
                 metallicFactor: sm.metallicFactor,
-                roughnessFactor: sm.roughnessFactor
+                roughnessFactor: sm.roughnessFactor,
+                exposure: 1.0,
+                debugMode: params.debugMode
             )
 
             if DebugOptions.useNonIndexedDraw {
@@ -157,9 +202,15 @@ final class StaticModelRenderer {
             }
             encoder.setVertexBytes(&u, length: MemoryLayout<PBRTypes.Uniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<PBRTypes.Uniforms>.stride, index: 0)
+            var keyL = SceneLighting.KeyLightGPUBytes(params.keyLight)
+            encoder.setFragmentBytes(&keyL, length: MemoryLayout<SceneLighting.KeyLightGPUBytes>.stride, index: 4)
 
-            if let t = sm.baseColorTex { encoder.setFragmentTexture(t, index: 0) }
-            if let t = sm.metallicRoughnessTex { encoder.setFragmentTexture(t, index: 1) }
+            encoder.setFragmentTexture(sm.baseColorTex ?? environment.neutralBaseColor1x1, index: 0)
+            encoder.setFragmentTexture(sm.metallicRoughnessTex ?? environment.neutralMetallicRoughness1x1, index: 1)
+            encoder.setFragmentTexture(environment.texture, index: 2)
+            encoder.setFragmentSamplerState(environment.sampler, index: 1)
+            if let st = params.shadowTexture { encoder.setFragmentTexture(st, index: 3) }
+            if let ss = params.shadowSampler { encoder.setFragmentSamplerState(ss, index: 2) }
 
             if DebugOptions.useNonIndexedDraw {
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: sm.nonIndexedVertexCount)
@@ -172,6 +223,34 @@ final class StaticModelRenderer {
                     indexBufferOffset: 0
                 )
             }
+        }
+    }
+
+    func drawShadow(
+        encoder: MTLRenderCommandEncoder,
+        lightViewProj: simd_float4x4,
+        model: simd_float4x4
+    ) {
+        struct ShadowUniforms {
+            var lightViewProj: simd_float4x4
+            var model: simd_float4x4
+            var jointCount: UInt32 = 0
+            var _pad0: SIMD3<Float> = .zero
+        }
+
+        encoder.setRenderPipelineState(shadowPipeline)
+        var u = ShadowUniforms(lightViewProj: lightViewProj, model: model)
+        encoder.setVertexBytes(&u, length: MemoryLayout<ShadowUniforms>.stride, index: 1)
+
+        for sm in submeshes {
+            encoder.setVertexBuffer(sm.vertexBuffer, offset: 0, index: 0)
+            encoder.drawIndexedPrimitives(
+                type: .triangle,
+                indexCount: sm.indexCount,
+                indexType: .uint32,
+                indexBuffer: sm.indexBuffer,
+                indexBufferOffset: 0
+            )
         }
     }
 }

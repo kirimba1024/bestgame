@@ -31,5 +31,15 @@ final class DebugDraw {
         encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
         encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: axisVertices.count)
     }
+
+    /// Мировые оси X/Y/Z из якоря у камеры (масштаб в мире), уже умноженные на `proj * view`.
+    func drawWorldAxesOverlay(encoder: MTLRenderCommandEncoder, pipeline: MTLRenderPipelineState, modelViewProj: simd_float4x4) {
+        struct Uniforms { var mvp: simd_float4x4 }
+        encoder.setRenderPipelineState(pipeline)
+        var u = Uniforms(mvp: modelViewProj)
+        encoder.setVertexBuffer(axisVertexBuffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: axisVertices.count)
+    }
 }
 

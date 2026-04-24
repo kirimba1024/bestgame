@@ -48,10 +48,13 @@ struct GLBAnimation {
     struct TrackVec3 {
         var times: [Float]
         var values: [SIMD3<Float>]
+        /// `true` = glTF `STEP`, `false` = `LINEAR`.
+        var step: Bool = false
     }
     struct TrackQuat {
         var times: [Float]
         var values: [simd_quatf]
+        var step: Bool = false
     }
 
     // nodeIndex -> track
