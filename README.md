@@ -2,9 +2,9 @@
 
 Демо **рендерера 3D** на **Swift** и **Metal** для **macOS**: загрузка **glTF 2.0 / GLB**, PBR metallic-roughness, скиннинг и инстансинг, направленный свет с картой теней (PCF), процедурное небо, упрощённый IBL из equirect, свободная камера и оверлей интерфейса поверх `MTKView`.
 
-| Обзор демо-сцены | DamagedHelmet, крупный план | Другая статическая модель (PBR, тени) |
+| Обзор демо-сцены | **DamagedHelmet**, крупный план | Статический PBR, небо и тени |
 | --- | --- | --- |
-| ![Полка ассетов, лисы, HUD и прицел](docs/screenshot.png) | ![Шлем крупно, прицел по центру](docs/screenshot-helmet-closeup.png) | ![Кабина на полу, небо и тени](docs/screenshot-cockpit.png) |
+| ![Полка ассетов, лисы, HUD и прицел](docs/screenshot.png) | ![Шлем крупно, прицел по центру](docs/screenshot-helmet-closeup.png) | ![Крупный план модели на полу](docs/screenshot-cockpit.png) |
 
 ## Возможности
 
