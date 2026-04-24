@@ -62,15 +62,20 @@ extension Renderer {
             )
         }
 
-        if skinnedRenderer == nil, let model = pendingSkinnedModel {
-            skinnedRenderer = SkinnedModelRenderer(
-                device: device,
-                library: library,
-                colorPixelFormat: view.colorPixelFormat,
-                depthPixelFormat: view.depthStencilPixelFormat,
-                model: model,
-                environment: environmentMap
-            )
+        if skinnedRenderers.count != pendingSkinnedModels.count {
+            skinnedRenderers.removeAll(keepingCapacity: true)
+            for model in pendingSkinnedModels {
+                skinnedRenderers.append(
+                    SkinnedModelRenderer(
+                        device: device,
+                        library: library,
+                        colorPixelFormat: view.colorPixelFormat,
+                        depthPixelFormat: view.depthStencilPixelFormat,
+                        model: model,
+                        environment: environmentMap
+                    )
+                )
+            }
         }
 
         let depthDesc = MTLDepthStencilDescriptor()

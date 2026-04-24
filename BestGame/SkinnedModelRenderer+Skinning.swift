@@ -8,11 +8,15 @@ extension SkinnedModelRenderer {
         guard jointCount > 0 else { return }
 
         var trs = model.nodeLocalTRS
-        if let anim = model.animation, anim.duration > 0 {
-            let t = fmodf(time, anim.duration)
-            for (node, track) in anim.translations { trs[node].t = sampleVec3(track: track, t: t) }
-            for (node, track) in anim.scales { trs[node].s = sampleVec3(track: track, t: t) }
-            for (node, track) in anim.rotations { trs[node].r = sampleQuat(track: track, t: t) }
+        let clips = model.animations
+        if !clips.isEmpty {
+            let cycle: Float = 6
+            let idx = Int(time / cycle) % clips.count
+            let anim = clips[idx]
+            let localT = fmodf(time, max(anim.duration, 1e-4))
+            for (node, track) in anim.translations { trs[node].t = sampleVec3(track: track, t: localT) }
+            for (node, track) in anim.scales { trs[node].s = sampleVec3(track: track, t: localT) }
+            for (node, track) in anim.rotations { trs[node].r = sampleQuat(track: track, t: localT) }
         }
 
         var global: [simd_float4x4] = Array(repeating: matrix_identity_float4x4, count: trs.count)

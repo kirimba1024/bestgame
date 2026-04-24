@@ -13,6 +13,8 @@ final class SkinnedModelRenderer {
         var time: Float
         var modelTranslation: SIMD3<Float> = .zero
         var modelScale: Float = 0.02
+        /// Доп. поворот в локальном пространстве после `R_y(π)` (правка осей отдельных glTF).
+        var modelBasisRotation: simd_float4x4 = matrix_identity_float4x4
         var lightViewProj: simd_float4x4
         var keyLight: SceneLighting.KeyLightFrame
         var shadowTexture: MTLTexture?
@@ -149,11 +151,12 @@ final class SkinnedModelRenderer {
         roughnessFactor = mat.roughnessFactor
 
         let loader = MTKTextureLoader(device: device)
-        if let d = mat.baseColorImageData {
-            baseColorTex = try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: true])
-        } else {
-            baseColorTex = nil
-        }
+        let resolvedBaseColor: MTLTexture? = {
+            guard let d = mat.baseColorImageData, !d.isEmpty else { return nil }
+            return (try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: true]))
+                ?? (try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: false]))
+        }()
+        baseColorTex = resolvedBaseColor
         if let d = mat.metallicRoughnessImageData {
             metallicRoughnessTex = try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: false])
         } else {

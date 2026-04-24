@@ -69,12 +69,14 @@ extension Renderer {
         let keyLight = SceneLighting.keyLight(atTime: time)
         let shelf = DemoScenePlacements.computeShelfFrame(
             staticAssetNames: staticPBRAssetNames,
+            staticHeroScale: staticSlotHeroScale,
             staticRendererCount: staticPBRRenderers.count,
-            hasSkinnedFox: skinnedRenderer != nil,
+            skinnedAssetNames: skinnedPBRAssetNames,
+            skinnedRendererCount: skinnedRenderers.count,
             hasFoxMeshFallback: solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0,
             config: sceneShelfConfig
         )
-        let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS, shelf: shelf)
+        let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS, shelf: shelf, time: time)
 
         shadowMap.render(into: commandBuffer) { encoder in
             drawShadowCasters(encoder: encoder, lightViewProj: lightViewProj, time: time, shelf: shelf)
@@ -105,7 +107,12 @@ extension Renderer {
 
         if hasRenderableScene {
             for (index, staticRenderer) in staticPBRRenderers.enumerated() {
-                let modelM = shelf.staticModelMatrices[index]
+                let assetName = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
+                let modelM = DemoScenePlacements.staticWorldModelMatrix(
+                    base: shelf.staticModelMatrices[index],
+                    assetName: assetName,
+                    time: time
+                )
                 staticRenderer.draw(
                     encoder: encoder,
                     params: .init(
@@ -122,30 +129,39 @@ extension Renderer {
                 )
             }
 
-            if let skinned = skinnedRenderer, let foxX = shelf.foxSlotCenterX {
-                let foxY = sceneShelfConfig.heroRestHeightY + sceneShelfConfig.foxGridExtraLiftY
-                let origin = SIMD3(foxX, foxY, sceneShelfConfig.sceneDepthZ)
-                let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
-                skinned.drawInstances(
-                    encoder: encoder,
-                    baseParams: .init(
-                        proj: proj,
-                        view: viewM,
-                        cameraPosWS: camera.position,
-                        time: time,
-                        modelTranslation: .zero,
-                        modelScale: sceneShelfConfig.foxModelScale,
-                        lightViewProj: lightViewProj,
-                        keyLight: keyLight,
-                        shadowTexture: shadowMap.texture,
-                        shadowSampler: shadowMap.compareSampler,
-                        debugMode: debugMode
-                    ),
-                    translations: grid
+            for (idx, skinned) in skinnedRenderers.enumerated() {
+                guard idx < shelf.skinnedSlotCentersX.count, idx < shelf.skinnedSlotBaseZ.count else { continue }
+                let cx = shelf.skinnedSlotCentersX[idx]
+                let baseZ = shelf.skinnedSlotBaseZ[idx]
+                let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
+                let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
+                let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+                let origin = SIMD3(cx, baseY, baseZ)
+                let baseParams = SkinnedModelRenderer.DrawParams(
+                    proj: proj,
+                    view: viewM,
+                    cameraPosWS: camera.position,
+                    time: time,
+                    modelTranslation: .zero,
+                    modelScale: style.modelScale,
+                    modelBasisRotation: style.modelBasisRotation,
+                    lightViewProj: lightViewProj,
+                    keyLight: keyLight,
+                    shadowTexture: shadowMap.texture,
+                    shadowSampler: shadowMap.compareSampler,
+                    debugMode: debugMode
                 )
+                if style.useInstancingGrid {
+                    let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                    skinned.drawInstances(encoder: encoder, baseParams: baseParams, translations: grid)
+                } else {
+                    var one = baseParams
+                    one.modelTranslation = origin
+                    skinned.draw(encoder: encoder, params: one)
+                }
             }
 
-            if skinnedRenderer == nil, let foxX = shelf.foxSlotCenterX, solidPass.glbIndexCount > 0 {
+            if skinnedRenderers.isEmpty, let foxX = shelf.foxMeshDebugSlotCenterX, solidPass.glbIndexCount > 0 {
                 let foxY = sceneShelfConfig.heroRestHeightY + sceneShelfConfig.foxGridExtraLiftY
                 let baseT = simd_float4x4.translation([0, foxY, sceneShelfConfig.sceneDepthZ])
                 let model =
@@ -200,6 +216,12 @@ extension Renderer {
             let gizmoMVP = WorldAxesGizmo.modelViewProj(proj: proj, view: viewM)
             debugDraw.drawWorldAxesOverlay(encoder: encoder, pipeline: pipe, modelViewProj: gizmoMVP)
             encoder.setDepthStencilState(depthState)
+        }
+
+        let axisNDCs = WorldAxesGizmo.axisLabelNDCs(proj: proj, view: viewM)
+        let sink = hudSink
+        DispatchQueue.main.async {
+            sink?.updateAxisLegendNDCPositions(x: axisNDCs.x, y: axisNDCs.y, z: axisNDCs.z)
         }
 
         encoder.endEncoding()

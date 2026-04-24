@@ -79,8 +79,8 @@ struct GLBSkinnedModel {
     var nodeLocalTRS: [GLBNodeTRS]
     var parentIndex: [Int?]
 
-    // Animation (single clip MVP)
-    var animation: GLBAnimation?
+    /// Все распознанные клипы (пусто — только поза из glTF).
+    var animations: [GLBAnimation]
 
     // Material (baseColor only MVP)
     var material: GLBPBRMaterialMR

@@ -18,9 +18,22 @@ extension SkinnedModelRenderer {
         }
     }
 
-    func drawShadow(encoder: MTLRenderCommandEncoder, lightViewProj: simd_float4x4, time: Float, modelTranslation: SIMD3<Float>, modelScale: Float) {
+    func drawShadow(
+        encoder: MTLRenderCommandEncoder,
+        lightViewProj: simd_float4x4,
+        time: Float,
+        modelTranslation: SIMD3<Float>,
+        modelScale: Float,
+        modelBasisRotation: simd_float4x4 = matrix_identity_float4x4
+    ) {
         updateJoints(time: time)
-        drawShadowPrepared(encoder: encoder, lightViewProj: lightViewProj, modelTranslation: modelTranslation, modelScale: modelScale)
+        drawShadowPrepared(
+            encoder: encoder,
+            lightViewProj: lightViewProj,
+            modelTranslation: modelTranslation,
+            modelScale: modelScale,
+            modelBasisRotation: modelBasisRotation
+        )
     }
 
     func drawShadowInstances(
@@ -28,11 +41,18 @@ extension SkinnedModelRenderer {
         lightViewProj: simd_float4x4,
         time: Float,
         translations: [SIMD3<Float>],
-        modelScale: Float
+        modelScale: Float,
+        modelBasisRotation: simd_float4x4 = matrix_identity_float4x4
     ) {
         updateJoints(time: time)
         for t in translations {
-            drawShadowPrepared(encoder: encoder, lightViewProj: lightViewProj, modelTranslation: t, modelScale: modelScale)
+            drawShadowPrepared(
+                encoder: encoder,
+                lightViewProj: lightViewProj,
+                modelTranslation: t,
+                modelScale: modelScale,
+                modelBasisRotation: modelBasisRotation
+            )
         }
     }
 
@@ -42,6 +62,7 @@ extension SkinnedModelRenderer {
         let modelM =
             simd_float4x4.translation(params.modelTranslation)
             * simd_float4x4.rotation(radians: .pi, axis: [0, 1, 0])
+            * params.modelBasisRotation
             * simd_float4x4.scale([params.modelScale, params.modelScale, params.modelScale])
 
         let mvp = params.proj * params.view * modelM
@@ -86,10 +107,17 @@ extension SkinnedModelRenderer {
         )
     }
 
-    private func drawShadowPrepared(encoder: MTLRenderCommandEncoder, lightViewProj: simd_float4x4, modelTranslation: SIMD3<Float>, modelScale: Float) {
+    private func drawShadowPrepared(
+        encoder: MTLRenderCommandEncoder,
+        lightViewProj: simd_float4x4,
+        modelTranslation: SIMD3<Float>,
+        modelScale: Float,
+        modelBasisRotation: simd_float4x4
+    ) {
         let modelM =
             simd_float4x4.translation(modelTranslation)
             * simd_float4x4.rotation(radians: .pi, axis: [0, 1, 0])
+            * modelBasisRotation
             * simd_float4x4.scale([modelScale, modelScale, modelScale])
 
         struct ShadowUniforms {

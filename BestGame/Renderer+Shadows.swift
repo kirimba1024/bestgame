@@ -4,7 +4,7 @@ import simd
 extension Renderer {
     // MARK: - Directional shadow
 
-    func makeLightViewProj(sunDir: SIMD3<Float>, shelf: DemoScenePlacements.ShelfFrame) -> simd_float4x4 {
+    func makeLightViewProj(sunDir: SIMD3<Float>, shelf: DemoScenePlacements.ShelfFrame, time: Float) -> simd_float4x4 {
         var wmin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var wmax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
 
@@ -17,7 +17,12 @@ extension Renderer {
         }
 
         for (index, renderer) in staticPBRRenderers.enumerated() {
-            let modelM = shelf.staticModelMatrices[index]
+            let nm = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
+            let modelM = DemoScenePlacements.staticWorldModelMatrix(
+                base: shelf.staticModelMatrices[index],
+                assetName: nm,
+                time: time
+            )
             growWorldAABB(
                 model: modelM,
                 localMin: renderer.localBounds.min,
@@ -25,15 +30,31 @@ extension Renderer {
             )
         }
 
-        if let skinned = skinnedRenderer, let foxX = shelf.foxSlotCenterX {
-            let foxY = sceneShelfConfig.heroRestHeightY + sceneShelfConfig.foxGridExtraLiftY
-            let origin = SIMD3(foxX, foxY, sceneShelfConfig.sceneDepthZ)
-            let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
-            let s = sceneShelfConfig.foxModelScale
-            for t in grid {
+        for (idx, skinned) in skinnedRenderers.enumerated() {
+            guard idx < shelf.skinnedSlotCentersX.count, idx < shelf.skinnedSlotBaseZ.count else { continue }
+            let cx = shelf.skinnedSlotCentersX[idx]
+            let baseZ = shelf.skinnedSlotBaseZ[idx]
+            let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
+            let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
+            let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+            let origin = SIMD3(cx, baseY, baseZ)
+            let s = style.modelScale
+            let R = style.modelBasisRotation
+            if style.useInstancingGrid {
+                let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                for t in grid {
+                    let modelM =
+                        simd_float4x4.translation(t)
+                        * simd_float4x4.rotation(radians: .pi, axis: [0, 1, 0])
+                        * R
+                        * simd_float4x4.scale([s, s, s])
+                    growWorldAABB(model: modelM, localMin: skinned.localBounds.min, localMax: skinned.localBounds.max)
+                }
+            } else {
                 let modelM =
-                    simd_float4x4.translation(t)
+                    simd_float4x4.translation(origin)
                     * simd_float4x4.rotation(radians: .pi, axis: [0, 1, 0])
+                    * R
                     * simd_float4x4.scale([s, s, s])
                 growWorldAABB(model: modelM, localMin: skinned.localBounds.min, localMax: skinned.localBounds.max)
             }
@@ -68,21 +89,43 @@ extension Renderer {
         shelf: DemoScenePlacements.ShelfFrame
     ) {
         for (index, renderer) in staticPBRRenderers.enumerated() {
-            let modelM = shelf.staticModelMatrices[index]
+            let nm = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
+            let modelM = DemoScenePlacements.staticWorldModelMatrix(
+                base: shelf.staticModelMatrices[index],
+                assetName: nm,
+                time: time
+            )
             renderer.drawShadow(encoder: encoder, lightViewProj: lightViewProj, model: modelM)
         }
 
-        if let skinned = skinnedRenderer, let foxX = shelf.foxSlotCenterX {
-            let foxY = sceneShelfConfig.heroRestHeightY + sceneShelfConfig.foxGridExtraLiftY
-            let origin = SIMD3(foxX, foxY, sceneShelfConfig.sceneDepthZ)
-            let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
-            skinned.drawShadowInstances(
-                encoder: encoder,
-                lightViewProj: lightViewProj,
-                time: time,
-                translations: grid,
-                modelScale: sceneShelfConfig.foxModelScale
-            )
+        for (idx, skinned) in skinnedRenderers.enumerated() {
+            guard idx < shelf.skinnedSlotCentersX.count, idx < shelf.skinnedSlotBaseZ.count else { continue }
+            let cx = shelf.skinnedSlotCentersX[idx]
+            let baseZ = shelf.skinnedSlotBaseZ[idx]
+            let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
+            let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
+            let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+            let origin = SIMD3(cx, baseY, baseZ)
+            if style.useInstancingGrid {
+                let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                skinned.drawShadowInstances(
+                    encoder: encoder,
+                    lightViewProj: lightViewProj,
+                    time: time,
+                    translations: grid,
+                    modelScale: style.modelScale,
+                    modelBasisRotation: style.modelBasisRotation
+                )
+            } else {
+                skinned.drawShadow(
+                    encoder: encoder,
+                    lightViewProj: lightViewProj,
+                    time: time,
+                    modelTranslation: origin,
+                    modelScale: style.modelScale,
+                    modelBasisRotation: style.modelBasisRotation
+                )
+            }
         }
 
         let groundM = DemoScenePlacements.groundWorldMatrix(shelf: shelf, config: sceneShelfConfig)

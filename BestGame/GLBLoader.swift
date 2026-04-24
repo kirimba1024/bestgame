@@ -213,8 +213,10 @@ final class GLBLoader {
             }
         }
 
-        // Animation (take first)
-        let animation = try GLTFAnimationParser.parseFirstAnimation(gltf: gltf, bin: bin)
+        var animations = (try? GLTFAnimationParser.parseAllAnimations(gltf: gltf, bin: bin)) ?? []
+        if animations.isEmpty, let one = try? GLTFAnimationParser.parseFirstAnimation(gltf: gltf, bin: bin) {
+            animations = [one]
+        }
 
         let material = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim0, bin: bin, bundle: .main)
 
@@ -227,7 +229,7 @@ final class GLBLoader {
             meshNodeIndex: meshNodeIndex,
             nodeLocalTRS: nodeTRS,
             parentIndex: parent,
-            animation: animation,
+            animations: animations,
             material: material
         )
     }

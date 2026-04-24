@@ -35,10 +35,14 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     // MARK: - Scene (lazy GPU wrappers)
 
-    var skinnedRenderer: SkinnedModelRenderer?
-    var pendingSkinnedModel: GLBSkinnedModel?
+    var skinnedRenderers: [SkinnedModelRenderer] = []
+    var pendingSkinnedModels: [GLBSkinnedModel] = []
+    /// Имена скиннутых ассетов (порядок = слоты на полке, см. `DemoScenePlacements.skinnedStyle`).
+    var skinnedPBRAssetNames: [String] = []
     var pendingStaticPBRModels: [GLBStaticModel] = []
     var staticPBRAssetNames: [String] = []
+    /// Параллельно `staticPBRRenderers`: крупный масштаб и подъём как у шлема.
+    var staticSlotHeroScale: [Bool] = []
     var staticPBRRenderers: [StaticModelRenderer] = []
     /// Пол и сферы-пробы вне ряда слотов (отдельные матрицы).
     var groundPlaneRenderer: StaticModelRenderer?
@@ -80,7 +84,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         let demo = DemoAssetsLoader.loadDefaultScene()
         pendingStaticPBRModels = demo.pendingStaticPBRModels
         staticPBRAssetNames = demo.staticPBRAssetNames
-        pendingSkinnedModel = demo.pendingSkinnedModel
+        staticSlotHeroScale = demo.staticSlotIsHeroScale
+        pendingSkinnedModels = demo.pendingSkinnedModels
+        skinnedPBRAssetNames = demo.skinnedPBRAssetNames
         if let mesh = demo.foxStaticMesh {
             solidPass.uploadFoxDebugMesh(mesh)
         }
@@ -93,7 +99,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var hasRenderableScene: Bool {
         !staticPBRRenderers.isEmpty
-            || skinnedRenderer != nil
+            || !skinnedRenderers.isEmpty
             || (solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0)
     }
 }

@@ -6,21 +6,20 @@ enum DemoScenePlacements {
 
     struct Config {
         var sceneDepthZ: Float = -5.5
-        /// Расстояние между центрами слотов шлем / лиса.
-        var sceneSpacingX: Float = 16.0
+        /// Расстояние между центрами слотов на полке.
+        var sceneSpacingX: Float = 14.0
         var staticBaseScale: Float = 0.5
-        var helmetAssetName: String = "DamagedHelmet"
-        /// Было 5 — удвоено по запросу.
-        var helmetScaleMultiplier: Float = 10
+        /// Множитель масштаба для слотов с `staticHeroScale[i] == true` (крупный PBR-герой).
+        var heroScaleMultiplier: Float = 10
         /// Масштаб одного инстанса лисы (draw + shadow + AABB).
         var foxModelScale: Float = 0.045
         /// Высота опоры шлема (и базовая для лис) над полом Y=0.
         var heroRestHeightY: Float = 3.35
         /// Доп. подъём только сетки лис (нижние ряды уходят в −Y относительно центра).
         var foxGridExtraLiftY: Float = 0.85
-        /// Доп. только для шлема (выше лис и пола).
-        var helmetExtraLiftY: Float = 1.35
-        var groundMarginX: Float = 20
+        /// Доп. подъём только для «геройских» статических слотов (шлем выше полки).
+        var heroExtraLiftY: Float = 3.38
+        var groundMarginX: Float = 36
         var groundHalfDepthZ: Float = 34
         var probeSpheresY: Float = 1.18
         /// Сферы ближе к камере, дальше от шлема/лис по глубине.
@@ -35,23 +34,91 @@ enum DemoScenePlacements {
     struct ShelfFrame {
         /// Индекс совпадает с порядком героевских `StaticModelRenderer` (только glTF из слотов).
         var staticModelMatrices: [simd_float4x4]
-        /// Центр слота «лиса» по X; `nil`, если слота нет.
-        var foxSlotCenterX: Float?
-        var hasFoxSlot: Bool { foxSlotCenterX != nil }
-        /// Границы по X занятых слотов шлем+лиса (для пола и проб).
+        /// Центры по X для каждого скиннутого ассета (тот же порядок, что `skinnedRenderers`).
+        var skinnedSlotCentersX: [Float]
+        /// Базовый Z для каждого скиннутого слота (`sceneDepthZ` + сдвиг из `skinnedStyle`).
+        var skinnedSlotBaseZ: [Float]
+        /// Слот для отладочного меша лисы, если скин не загрузился, а геометрия есть.
+        var foxMeshDebugSlotCenterX: Float?
         var slotSpanMinX: Float
         var slotSpanMaxX: Float
     }
 
+    /// Размещение скиннутого ассета: сетка инстансов (только Fox) или один экземпляр.
+    struct SkinnedSlotStyle {
+        var useInstancingGrid: Bool
+        var modelScale: Float
+        var extraLiftY: Float
+        /// Сдвиг по Z относительно `config.sceneDepthZ` (+ — ближе к типичной камере с +Z).
+        var depthBiasZ: Float
+        var modelBasisRotation: simd_float4x4
+    }
+
+    static func skinnedStyle(assetName: String, config: Config) -> SkinnedSlotStyle {
+        switch assetName {
+        case "Fox":
+            return .init(
+                useInstancingGrid: true,
+                modelScale: config.foxModelScale,
+                extraLiftY: config.foxGridExtraLiftY,
+                depthBiasZ: 0,
+                modelBasisRotation: matrix_identity_float4x4
+            )
+        case "CesiumMan":
+            /// +π/2 по X давал «кверх ногами» — используем −π/2 (ориентация после общего R_y(π)).
+            let pitch = simd_float4x4.rotation(radians: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
+            return .init(
+                useInstancingGrid: false,
+                modelScale: 5.5,
+                extraLiftY: 0.35,
+                depthBiasZ: 2.35,
+                modelBasisRotation: pitch
+            )
+        case "RiggedSimple":
+            let rx180 = simd_float4x4.rotation(radians: .pi, axis: SIMD3<Float>(1, 0, 0))
+            let rx90 = simd_float4x4.rotation(radians: .pi / 2, axis: SIMD3<Float>(1, 0, 0))
+            let stand = rx180 * rx90
+            return .init(
+                useInstancingGrid: false,
+                modelScale: 1.55,
+                extraLiftY: 0,
+                depthBiasZ: 2.35,
+                modelBasisRotation: stand
+            )
+        default:
+            return .init(
+                useInstancingGrid: false,
+                modelScale: config.foxModelScale,
+                extraLiftY: 0,
+                depthBiasZ: 0,
+                modelBasisRotation: matrix_identity_float4x4
+            )
+        }
+    }
+
+    /// Доп. множитель к `staticBaseScale` / геройскому масштабу (локальные единицы Khronos сильно различаются).
+    static func staticSizeMultiplier(assetName: String) -> Float {
+        switch assetName {
+        case "Box":
+            return 6.2
+        case "BoomBox":
+            return 0.32
+        default:
+            return 1.0
+        }
+    }
+
     static func computeShelfFrame(
         staticAssetNames: [String],
+        staticHeroScale: [Bool],
         staticRendererCount: Int,
-        hasSkinnedFox: Bool,
+        skinnedAssetNames: [String],
+        skinnedRendererCount: Int,
         hasFoxMeshFallback: Bool,
         config: Config = .init()
     ) -> ShelfFrame {
-        let hasFoxSlot = hasSkinnedFox || hasFoxMeshFallback
-        let totalSlots = staticRendererCount + (hasFoxSlot ? 1 : 0)
+        let needsDebugFoxSlot = hasFoxMeshFallback && skinnedRendererCount == 0
+        let totalSlots = staticRendererCount + skinnedRendererCount + (needsDebugFoxSlot ? 1 : 0)
         let xs = SceneLayout.xOffsets(count: max(1, totalSlots), spacing: config.sceneSpacingX)
         var slot = 0
 
@@ -62,9 +129,14 @@ enum DemoScenePlacements {
         for i in 0..<staticRendererCount {
             let x = xs[slot]
             slot += 1
-            let isHelmet = i < staticAssetNames.count && staticAssetNames[i] == config.helmetAssetName
-            let scale = config.staticBaseScale * (isHelmet ? config.helmetScaleMultiplier : 1)
-            let baseY = config.heroRestHeightY + (isHelmet ? config.helmetExtraLiftY : 0)
+            let isHero = i < staticHeroScale.count && staticHeroScale[i]
+            let assetName = i < staticAssetNames.count ? staticAssetNames[i] : ""
+            let slotMul = staticSizeMultiplier(assetName: assetName)
+            let scale =
+                config.staticBaseScale
+                * (isHero ? config.heroScaleMultiplier : 1)
+                * slotMul
+            let baseY = config.heroRestHeightY + (isHero ? config.heroExtraLiftY : 0)
             let baseT = simd_float4x4.translation([0, baseY, config.sceneDepthZ])
             let modelM =
                 baseT
@@ -74,7 +146,19 @@ enum DemoScenePlacements {
             staticMatrices.append(modelM)
         }
 
-        let foxX: Float? = hasFoxSlot ? xs[slot] : nil
+        var skinnedCenters: [Float] = []
+        var skinnedBaseZ: [Float] = []
+        skinnedCenters.reserveCapacity(skinnedRendererCount)
+        skinnedBaseZ.reserveCapacity(skinnedRendererCount)
+        for j in 0..<skinnedRendererCount {
+            skinnedCenters.append(xs[slot])
+            let nm = j < skinnedAssetNames.count ? skinnedAssetNames[j] : ""
+            let st = skinnedStyle(assetName: nm, config: config)
+            skinnedBaseZ.append(config.sceneDepthZ + st.depthBiasZ)
+            slot += 1
+        }
+
+        let debugFoxX: Float? = needsDebugFoxSlot ? xs[slot] : nil
 
         let spanSlots = max(1, totalSlots)
         let slotSpanMinX = xs[0]
@@ -82,7 +166,9 @@ enum DemoScenePlacements {
 
         return ShelfFrame(
             staticModelMatrices: staticMatrices,
-            foxSlotCenterX: foxX,
+            skinnedSlotCentersX: skinnedCenters,
+            skinnedSlotBaseZ: skinnedBaseZ,
+            foxMeshDebugSlotCenterX: debugFoxX,
             slotSpanMinX: slotSpanMinX,
             slotSpanMaxX: slotSpanMaxX
         )
@@ -134,5 +220,26 @@ enum DemoScenePlacements {
     private enum FoxInstancing {
         static let gridExtent = 3
         static let spacing = SIMD3<Float>(4.4, 3.6, 6.0)
+    }
+
+    // MARK: - Статика: вращение вокруг вертикали через проекцию центра на пол (XZ)
+
+    private static func worldYawAtFootprint(base: simd_float4x4, time: Float, speed: Float) -> simd_float4x4 {
+        let px = base.columns.3.x
+        let pz = base.columns.3.z
+        let p = SIMD3<Float>(px, 0, pz)
+        let r = simd_float4x4.rotation(radians: time * speed, axis: SIMD3<Float>(0, 1, 0))
+        return simd_float4x4.translation(p) * r * simd_float4x4.translation(-p)
+    }
+
+    static func staticWorldModelMatrix(base: simd_float4x4, assetName: String, time: Float) -> simd_float4x4 {
+        switch assetName {
+        case "Box":
+            return worldYawAtFootprint(base: base, time: time, speed: 0.9) * base
+        case "DamagedHelmet":
+            return worldYawAtFootprint(base: base, time: time, speed: 0.38) * base
+        default:
+            return base
+        }
     }
 }

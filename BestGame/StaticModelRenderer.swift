@@ -148,9 +148,14 @@ final class StaticModelRenderer {
                 continue
             }
 
-            let baseTex = (prim.material.baseColorImageData != nil)
-                ? try? loader.newTexture(data: prim.material.baseColorImageData!, options: [MTKTextureLoader.Option.SRGB: true])
-                : nil
+            let bcData = prim.material.baseColorImageData
+            var baseTex: MTLTexture?
+            if let d = bcData, !d.isEmpty {
+                baseTex = try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: true])
+                if baseTex == nil {
+                    baseTex = try? loader.newTexture(data: d, options: [MTKTextureLoader.Option.SRGB: false])
+                }
+            }
             let mrTex = (prim.material.metallicRoughnessImageData != nil)
                 ? try? loader.newTexture(data: prim.material.metallicRoughnessImageData!, options: [MTKTextureLoader.Option.SRGB: false])
                 : nil

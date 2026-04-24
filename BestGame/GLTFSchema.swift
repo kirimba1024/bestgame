@@ -69,6 +69,7 @@ struct GLTF: Decodable {
     }
 
     struct Animation: Decodable {
+        var name: String?
         struct Sampler: Decodable {
             var input: Int
             var output: Int

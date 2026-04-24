@@ -48,32 +48,59 @@ enum GLTFMaterials {
     }
 
     private static func decodeDataURI(_ uri: String) -> Data? {
-        // Example: data:image/png;base64,AAAA...
         guard uri.hasPrefix("data:") else { return nil }
         guard let comma = uri.firstIndex(of: ",") else { return nil }
         let meta = String(uri[..<comma])
         let payload = String(uri[uri.index(after: comma)...])
         let isBase64 = meta.lowercased().contains(";base64")
         guard isBase64 else {
-            // Percent-encoded raw data. Rare for images; skip for now.
             return nil
         }
         return Data(base64Encoded: payload, options: [.ignoreUnknownCharacters])
     }
 
+    /// Ищет файл текстуры в бандле: корень, `Models/`, `Assets/Models/` и варианты расширения.
     private static func loadBundledURI(_ uri: String, bundle: Bundle) -> Data? {
-        // Common case: "textures/Albedo.png" or "Albedo.png".
         let path = uri.split(separator: "?").first.map(String.init) ?? uri
         let filename = (path as NSString).lastPathComponent
-        let name = (filename as NSString).deletingPathExtension
-        let ext = (filename as NSString).pathExtension
+        let baseName = (filename as NSString).deletingPathExtension
+        let extFromFile = ((filename as NSString).pathExtension).lowercased()
 
-        let url = ext.isEmpty
-            ? bundle.url(forResource: filename, withExtension: nil) ?? bundle.url(forResource: name, withExtension: nil)
-            : bundle.url(forResource: name, withExtension: ext)
+        let extCandidates: [String]
+        if extFromFile.isEmpty {
+            extCandidates = ["png", "jpg", "jpeg", "webp"]
+        } else {
+            extCandidates = [extFromFile]
+        }
 
-        guard let url else { return nil }
-        return try? Data(contentsOf: url)
+        let subdirs: [String?] = [nil, "Models", "Assets/Models"]
+
+        for sub in subdirs {
+            for ext in extCandidates {
+                if let url = bundle.url(forResource: baseName, withExtension: ext, subdirectory: sub),
+                   let data = try? Data(contentsOf: url), !data.isEmpty {
+                    return data
+                }
+            }
+        }
+
+        if !extFromFile.isEmpty, let url = bundle.url(forResource: filename, withExtension: nil),
+           let data = try? Data(contentsOf: url), !data.isEmpty {
+            return data
+        }
+
+        if let resourcePath = bundle.resourcePath {
+            for sub in ["", "Models", "Assets/Models"] {
+                let dir = sub.isEmpty ? resourcePath : (resourcePath as NSString).appendingPathComponent(sub)
+                for ext in extCandidates {
+                    let full = (dir as NSString).appendingPathComponent("\(baseName).\(ext)")
+                    if let data = try? Data(contentsOf: URL(fileURLWithPath: full)), !data.isEmpty {
+                        return data
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 }
-

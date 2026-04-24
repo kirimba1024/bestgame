@@ -1,34 +1,45 @@
 # BestGame
 
-Просмотрщик **3D** на **Swift** и **Metal** (macOS / универсальная схема Xcode): загрузка **glTF 2.0 / GLB**, PBR metallic-roughness, скиннинг, процедурный пол и сферы-пробы, направленный свет с картой теней, небо и упрощённый IBL.
+Демо **рендерера 3D** на **Swift** и **Metal** для **macOS**: загрузка **glTF 2.0 / GLB**, PBR metallic-roughness, скиннинг и инстансинг, направленный свет с картой теней (PCF), процедурное небо, упрощённый IBL из equirect, свободная камера и оверлей интерфейса поверх `MTKView`.
 
-| Сцена: сферы, шлем, сетка лис, тени | Шире: полка ассетов и лисы |
+![Скриншот: демо-сцена с PBR, лисами, тенями и HUD](docs/screenshot.png)
+
+## Возможности
+
+- **Статический PBR** для нескольких GLB на «полке» сцены (например BoomBox, Box, DamagedHelmet), тени от направленного света.
+- **Скиннутый PBR** для нескольких моделей (например Fox с сеткой инстансов, CesiumMan, RiggedSimple), анимации по клипам glTF.
+- **Процедурная геометрия**: пол, три сферы-пробы материалов (диффуз / диэлектрик / металл).
+- **Интерфейс**: FPS и строка состава сцены в левом верхнем углу; компактный **гизмо мировых осей** X/Y/Z с подписями у концов; **прицел** в центре экрана (полупрозрачный крест и точка); над игровым видом **скрывается системный курсор**, чтобы не отвлекать (при уходе указателя с вида или при потере фокуса окна курсор снова виден).
+- **Ввод**: вращение камеры (ПКМ + движение мыши), WASD и полёт по высоте (QE), ускорение Shift; Esc завершает приложение.
+
+## Структура кода (кратко)
+
+| Область | Файлы и назначение |
 | --- | --- |
-| ![Полная сцена](docs/screenshot-demo-wide.png) | ![PBR и MetalRoughSpheres](docs/screenshot-pbr-scene.png) |
-
-## Что в проекте
-
-- **Metal**: модульные исходники в `BestGame/MetalShaders/` — общий заголовок `ShaderShared.h` (типы, BRDF, небо для тумана), отдельные файлы проходов `SolidColorPass.metal` (куб/отладка), `SkyPass.metal` (полноэкранное небо), `PBRPass.metal` (статический и скиннутый PBR, тени). Путь к заголовку задаётся в таргете: `MTL_HEADER_SEARCH_PATHS = $(SRCROOT)/BestGame/MetalShaders`.
-- **Рендер**: один color-pass с глубиной; первым рисуется небо; затем статические GLB, инстансинг скиннутой лисы (**Fox**), пол, сферы; отдельный проход в depth-текстуру для PCF-теней.
-- **Загрузка GLB**: glTF JSON, бинарный чанк, аксессоры, материалы MR (`GLBLoader`, `GLTF*`).
-- **Сцена**: `DemoScenePlacements` — слоты под несколько ассетов из `BestGame/Assets/Models/` (например **DamagedHelmet**, **Fox**), процедурный пол и три сферы (`DemoProceduralGeometry`), runtime equirect env (`EnvironmentMap`).
-- **Свет**: единое солнце (`SceneLighting`) — направление, ключ в PBR, диск в небе, согласованный туман в шейдере; `Renderer+Shadows` — орто frustum под сцену.
-- **Ввод**: мышь (обзор), WASD + QE, `Shift` — ускорение; `Esc` — выход (`GameMTKView`, `FlyCamera`).
+| Точка входа SwiftUI | `BestGameApp.swift`, `ContentView.swift`, `MetalView.swift` |
+| Окно и ввод, HUD, прицел, курсор | `GameMTKView.swift`, `GameHUDSink.swift`, `InputState.swift` |
+| Кадр Metal, тени, сцена | `Renderer.swift`, `Renderer+MTKView.swift`, `Renderer+Pipelines.swift`, `Renderer+Shadows.swift` |
+| GLB / glTF | `GLBLoader.swift`, `GLBTypes.swift`, `GLTF*.swift` |
+| Статический и скиннутый меш | `StaticModelRenderer.swift`, `SkinnedModelRenderer*.swift` |
+| Раскладка демо | `DemoScenePlacements.swift`, `DemoAssetsLoader.swift` |
+| Шейдеры | `BestGame/MetalShaders/` — `ShaderShared.h`, `PBRPass.metal`, `SkyPass.metal`, `SolidColorPass.metal` (заголовки: `MTL_HEADER_SEARCH_PATHS = $(SRCROOT)/BestGame/MetalShaders`) |
+| Камера и математика | `FlyCamera.swift`, `Math.swift` |
+| Небо, тени, отладка | `SkyRenderer.swift`, `ShadowMapRenderer.swift`, `DebugDraw.swift`, `WorldAxesGizmo.swift` |
 
 ## Требования
 
 - macOS с **Metal**
-- **Xcode** (objectVersion 77, Swift 5)
+- **Xcode** (см. `BestGame.xcodeproj`, Swift 5)
 
-## Сборка
+## Сборка и запуск
 
-Откройте `BestGame.xcodeproj`, схема **BestGame**, цель **My Mac**, ⌘R.
+Откройте `BestGame.xcodeproj`, схема **BestGame**, назначение **My Mac**, затем ⌘R.
 
 ## Ограничения
 
-- IBL — не полноценный префильтрованный cubemap, а лёгкий equirect + аналитическое солнце и хак «солнце в отражении» на металлах.
-- Поддерживается узкий подмножество glTF, достаточный для Khronos sample models в репозитории.
+- IBL не на полном префильтрованном cubemap: equirect окружение плюс аналитическое солнце и упрощённые отражения на металлах.
+- Поддерживается ограниченное подмножество glTF, достаточное для выбранных демо-моделей в репозитории.
 
 ## Лицензии ассетов
 
-Модели из [glTF Sample Models](https://github.com/KhronosGroup/glTF-Sample-Models) — см. лицензии в оригинальных репозиториях.
+Модели из [glTF Sample Models](https://github.com/KhronosGroup/glTF-Sample-Models) — условия см. в исходных репозиториях Khronos.
