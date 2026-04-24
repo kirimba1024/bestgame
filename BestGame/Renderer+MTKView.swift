@@ -17,14 +17,14 @@ extension Renderer {
 
         let now = CACurrentMediaTime()
         let elapsed = Float(max(0, now - lastFrameTime))
-        let dt = min(FrameTiming.maxDeltaTimeSeconds, elapsed)
+        let dt = min(RendererFrameTiming.maxDeltaTimeSeconds, elapsed)
         lastFrameTime = now
         camera.update(dt: dt, input: input)
 
         hudAccum += dt
         hudFrames += 1
-        if hudAccum >= FrameTiming.hudRefreshIntervalSeconds, let hud = hudSink {
-            hud.setHUDText(Self.formatHUDText(
+        if hudAccum >= RendererFrameTiming.hudRefreshIntervalSeconds, let hud = hudSink {
+            hud.setHUDText(RendererHUDFormatting.formatHUDText(
                 fps: Float(hudFrames) / max(1e-6, hudAccum),
                 frameMs: (hudAccum / Float(hudFrames)) * 1000,
                 drawableSize: view.drawableSize,
@@ -54,27 +54,26 @@ extension Renderer {
         }
 
         let time = Float(now - startTime)
-        let angle = time * FrameTiming.cubeRotationMultiplier
+        let angle = time * RendererFrameTiming.cubeRotationMultiplier
 
         let aspect = max(1e-3, Float(view.drawableSize.width / max(view.drawableSize.height, 1)))
         let proj = simd_float4x4.perspectiveRH(
-            fovyRadians: FrameTiming.verticalFieldOfViewRadians,
+            fovyRadians: RendererFrameTiming.verticalFieldOfViewRadians,
             aspect: aspect,
-            nearZ: FrameTiming.depthNear,
-            farZ: FrameTiming.depthFar
+            nearZ: RendererFrameTiming.depthNear,
+            farZ: RendererFrameTiming.depthFar
         )
         let viewM = camera.viewMatrix()
         let viewProj = proj * viewM
 
         let keyLight = SceneLighting.keyLight(atTime: time)
-        let shelf = DemoScenePlacements.computeShelfFrame(
+        let shelf = scenePlacement.computeShelfFrame(
             staticAssetNames: staticPBRAssetNames,
             staticHeroScale: staticSlotHeroScale,
             staticRendererCount: staticPBRRenderers.count,
             skinnedAssetNames: skinnedPBRAssetNames,
             skinnedRendererCount: skinnedRenderers.count,
-            hasFoxMeshFallback: solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0,
-            config: sceneShelfConfig
+            hasFoxMeshFallback: solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0
         )
         let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS, shelf: shelf, time: time)
 
@@ -108,7 +107,7 @@ extension Renderer {
         if hasRenderableScene {
             for (index, staticRenderer) in staticPBRRenderers.enumerated() {
                 let assetName = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
-                let modelM = DemoScenePlacements.staticWorldModelMatrix(
+                let modelM = scenePlacement.staticWorldModelMatrix(
                     base: shelf.staticModelMatrices[index],
                     assetName: assetName,
                     time: time
@@ -134,8 +133,8 @@ extension Renderer {
                 let cx = shelf.skinnedSlotCentersX[idx]
                 let baseZ = shelf.skinnedSlotBaseZ[idx]
                 let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
-                let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
-                let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+                let style = scenePlacement.skinnedStyle(assetName: assetName)
+                let baseY = scenePlacement.shelfConfig.heroRestHeightY + style.extraLiftY
                 let origin = SIMD3(cx, baseY, baseZ)
                 let baseParams = SkinnedModelRenderer.DrawParams(
                     proj: proj,
@@ -152,7 +151,7 @@ extension Renderer {
                     debugMode: debugMode
                 )
                 if style.useInstancingGrid {
-                    let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                    let grid = scenePlacement.foxInstancingGrid(origin: origin)
                     skinned.drawInstances(encoder: encoder, baseParams: baseParams, translations: grid)
                 } else {
                     var one = baseParams
@@ -162,8 +161,8 @@ extension Renderer {
             }
 
             if skinnedRenderers.isEmpty, let foxX = shelf.foxMeshDebugSlotCenterX, solidPass.glbIndexCount > 0 {
-                let foxY = sceneShelfConfig.heroRestHeightY + sceneShelfConfig.foxGridExtraLiftY
-                let baseT = simd_float4x4.translation([0, foxY, sceneShelfConfig.sceneDepthZ])
+                let foxY = scenePlacement.shelfConfig.heroRestHeightY + scenePlacement.shelfConfig.foxGridExtraLiftY
+                let baseT = simd_float4x4.translation([0, foxY, scenePlacement.shelfConfig.sceneDepthZ])
                 let model =
                     baseT
                     * simd_float4x4.translation([foxX, 0, 0])
@@ -177,7 +176,7 @@ extension Renderer {
                 )
             }
 
-            let groundM = DemoScenePlacements.groundWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+            let groundM = scenePlacement.groundWorldMatrix(shelf: shelf)
             groundPlaneRenderer?.draw(
                 encoder: encoder,
                 params: .init(
@@ -192,7 +191,7 @@ extension Renderer {
                     debugMode: debugMode
                 )
             )
-            let probeM = DemoScenePlacements.materialProbeWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+            let probeM = scenePlacement.materialProbeWorldMatrix(shelf: shelf)
             materialProbeRenderer?.draw(
                 encoder: encoder,
                 params: .init(
@@ -230,33 +229,4 @@ extension Renderer {
 
         hudSink?.flushPerFrameInputEnd()
     }
-
-    // MARK: - HUD
-
-    private static func formatHUDText(
-        fps: Float,
-        frameMs: Float,
-        drawableSize: CGSize,
-        modelLine: String?
-    ) -> String {
-        let w = drawableSize.width
-        let h = drawableSize.height
-        if let modelLine {
-            return String(format: "FPS: %.1f  (%.2f ms)\nDrawable: %.0fx%.0f\n%@", fps, frameMs, w, h, modelLine)
-        }
-        return String(format: "FPS: %.1f  (%.2f ms)\nDrawable: %.0fx%.0f", fps, frameMs, w, h)
-    }
-}
-
-// MARK: - Constants
-
-private enum FrameTiming {
-    /// Ограничение dt при лагах (стабильность симуляции камеры).
-    static let maxDeltaTimeSeconds: Float = 1.0 / 20.0
-    static let hudRefreshIntervalSeconds: Float = 0.35
-    static let verticalFieldOfViewRadians: Float = 60 * (.pi / 180)
-    static let depthNear: Float = 0.1
-    /// Сцена + свободный полёт камеры легко уходят дальше 100 m — иначе клип → «дыры» и небо сквозь меши.
-    static let depthFar: Float = 600
-    static let cubeRotationMultiplier: Float = 0.9
 }

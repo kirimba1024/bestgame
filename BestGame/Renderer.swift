@@ -37,7 +37,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     var skinnedRenderers: [SkinnedModelRenderer] = []
     var pendingSkinnedModels: [GLBSkinnedModel] = []
-    /// Имена скиннутых ассетов (порядок = слоты на полке, см. `DemoScenePlacements.skinnedStyle`).
+    /// Имена скиннутых ассетов (порядок = слоты на полке; стиль слота — `scenePlacement.skinnedStyle`).
     var skinnedPBRAssetNames: [String] = []
     var pendingStaticPBRModels: [GLBStaticModel] = []
     var staticPBRAssetNames: [String] = []
@@ -57,7 +57,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     // MARK: - Layout
 
-    let sceneShelfConfig = DemoScenePlacements.Config()
+    let scenePlacement: ScenePlacementProviding
 
     // MARK: - Life cycle
 
@@ -78,6 +78,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         environmentMap = EnvironmentMap(device: device, commandQueue: commandQueue)
         shadowMap = ShadowMapRenderer(device: device)
         camera = FlyCamera()
+        scenePlacement = DemoScenePlacementProvider()
 
         super.init()
 

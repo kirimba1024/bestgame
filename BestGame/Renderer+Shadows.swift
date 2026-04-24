@@ -18,7 +18,7 @@ extension Renderer {
 
         for (index, renderer) in staticPBRRenderers.enumerated() {
             let nm = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
-            let modelM = DemoScenePlacements.staticWorldModelMatrix(
+            let modelM = scenePlacement.staticWorldModelMatrix(
                 base: shelf.staticModelMatrices[index],
                 assetName: nm,
                 time: time
@@ -35,13 +35,13 @@ extension Renderer {
             let cx = shelf.skinnedSlotCentersX[idx]
             let baseZ = shelf.skinnedSlotBaseZ[idx]
             let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
-            let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
-            let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+            let style = scenePlacement.skinnedStyle(assetName: assetName)
+            let baseY = scenePlacement.shelfConfig.heroRestHeightY + style.extraLiftY
             let origin = SIMD3(cx, baseY, baseZ)
             let s = style.modelScale
             let R = style.modelBasisRotation
             if style.useInstancingGrid {
-                let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                let grid = scenePlacement.foxInstancingGrid(origin: origin)
                 for t in grid {
                     let modelM =
                         simd_float4x4.translation(t)
@@ -61,16 +61,16 @@ extension Renderer {
         }
 
         if let ground = groundPlaneRenderer {
-            let gm = DemoScenePlacements.groundWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+            let gm = scenePlacement.groundWorldMatrix(shelf: shelf)
             growWorldAABB(model: gm, localMin: ground.localBounds.min, localMax: ground.localBounds.max)
         }
         if let probe = materialProbeRenderer {
-            let pm = DemoScenePlacements.materialProbeWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+            let pm = scenePlacement.materialProbeWorldMatrix(shelf: shelf)
             growWorldAABB(model: pm, localMin: probe.localBounds.min, localMax: probe.localBounds.max)
         }
 
         if !wmin.x.isFinite || !wmax.x.isFinite {
-            let center = SIMD3<Float>(0, 1.0, sceneShelfConfig.sceneDepthZ)
+            let center = SIMD3<Float>(0, 1.0, scenePlacement.shelfConfig.sceneDepthZ)
             return DirectionalShadowFrustum.fallbackLightViewProjection(sunDir: sunDir, sceneCenter: center)
         }
 
@@ -90,7 +90,7 @@ extension Renderer {
     ) {
         for (index, renderer) in staticPBRRenderers.enumerated() {
             let nm = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
-            let modelM = DemoScenePlacements.staticWorldModelMatrix(
+            let modelM = scenePlacement.staticWorldModelMatrix(
                 base: shelf.staticModelMatrices[index],
                 assetName: nm,
                 time: time
@@ -103,11 +103,11 @@ extension Renderer {
             let cx = shelf.skinnedSlotCentersX[idx]
             let baseZ = shelf.skinnedSlotBaseZ[idx]
             let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
-            let style = DemoScenePlacements.skinnedStyle(assetName: assetName, config: sceneShelfConfig)
-            let baseY = sceneShelfConfig.heroRestHeightY + style.extraLiftY
+            let style = scenePlacement.skinnedStyle(assetName: assetName)
+            let baseY = scenePlacement.shelfConfig.heroRestHeightY + style.extraLiftY
             let origin = SIMD3(cx, baseY, baseZ)
             if style.useInstancingGrid {
-                let grid = DemoScenePlacements.foxInstancingGrid(origin: origin)
+                let grid = scenePlacement.foxInstancingGrid(origin: origin)
                 skinned.drawShadowInstances(
                     encoder: encoder,
                     lightViewProj: lightViewProj,
@@ -128,10 +128,10 @@ extension Renderer {
             }
         }
 
-        let groundM = DemoScenePlacements.groundWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+        let groundM = scenePlacement.groundWorldMatrix(shelf: shelf)
         groundPlaneRenderer?.drawShadow(encoder: encoder, lightViewProj: lightViewProj, model: groundM)
 
-        let probeM = DemoScenePlacements.materialProbeWorldMatrix(shelf: shelf, config: sceneShelfConfig)
+        let probeM = scenePlacement.materialProbeWorldMatrix(shelf: shelf)
         materialProbeRenderer?.drawShadow(encoder: encoder, lightViewProj: lightViewProj, model: probeM)
     }
 }
