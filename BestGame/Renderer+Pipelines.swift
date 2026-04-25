@@ -58,7 +58,9 @@ extension Renderer {
         let width = max(1, Int(size.width))
         let height = max(1, Int(size.height))
 
-        if let depthTexture, depthTexture.width == width, depthTexture.height == height {
+        if let depthTexture, depthTexture.width == width, depthTexture.height == height,
+           let depthTextureForSampling, depthTextureForSampling.width == width, depthTextureForSampling.height == height
+        {
             return
         }
 
@@ -71,5 +73,17 @@ extension Renderer {
         desc.usage = [.renderTarget, .shaderRead]
         desc.storageMode = .private
         depthTexture = device.makeTexture(descriptor: desc)
+
+        // A separate texture for shader sampling to avoid undefined behavior when the depth attachment
+        // is sampled in the same render pass (can manifest as moving "blocks"/"sparkles").
+        let sampleDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: view.depthStencilPixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        sampleDesc.usage = [.shaderRead]
+        sampleDesc.storageMode = .private
+        depthTextureForSampling = device.makeTexture(descriptor: sampleDesc)
     }
 }

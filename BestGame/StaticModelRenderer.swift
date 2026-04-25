@@ -37,6 +37,7 @@ final class StaticModelRenderer {
         var indexCount: Int
         var nonIndexedVertexBuffer: MTLBuffer
         var nonIndexedVertexCount: Int
+        var vertexStrideBytes: Int
         var baseColorFactor: SIMD4<Float>
         var metallicFactor: Float
         var roughnessFactor: Float
@@ -45,6 +46,20 @@ final class StaticModelRenderer {
     }
 
     private let submeshes: [Submesh]
+    var isDrawable: Bool { submeshes.contains(where: { $0.indexCount > 0 && $0.nonIndexedVertexCount > 0 }) }
+    private(set) var sanitizedTriangleDropCount: Int = 0
+    var isSafeForInstancedNonIndexedDraw: Bool {
+        // Metal debug validation is strict; only allow instanced non-indexed draw when buffers are consistent.
+        for sm in submeshes {
+            if sm.indexCount <= 0 { continue }
+            if sm.nonIndexedVertexCount <= 0 { continue }
+            if sm.nonIndexedVertexCount % 3 != 0 { return false }
+            let stride = max(1, sm.vertexStrideBytes)
+            let maxVerts = sm.nonIndexedVertexBuffer.length / stride
+            if sm.nonIndexedVertexCount > maxVerts { return false }
+        }
+        return true
+    }
 
     // MARK: - Life cycle
 
@@ -146,6 +161,7 @@ final class StaticModelRenderer {
         var bmin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var bmax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         for prim in model.primitives {
+            if prim.vertices.isEmpty { continue }
             for v in prim.vertices {
                 bmin = simd_min(bmin, v.position)
                 bmax = simd_max(bmax, v.position)
@@ -157,15 +173,46 @@ final class StaticModelRenderer {
                     uv: SIMD4<Float>($0.uv.x, $0.uv.y, 0, 0)
                 )
             }
-            let indexCount = prim.indices.count
-            guard
-                let vb = device.makeBuffer(bytes: verts, length: verts.count * MemoryLayout<GPUVertex>.stride, options: [.storageModeShared]),
-                let ib = device.makeBuffer(bytes: prim.indices, length: prim.indices.count * MemoryLayout<UInt32>.stride, options: [.storageModeShared])
-            else { continue }
+            // Sanitize indices: some GLBs contain garbage indices. We drop invalid triangles and still draw the rest.
+            var indices: [UInt32] = prim.indices
+            if indices.isEmpty {
+                // If no indices, try to interpret vertices as a triangle list.
+                if verts.count >= 3, verts.count % 3 == 0 {
+                    indices = Array(0..<UInt32(verts.count))
+                } else {
+                    continue
+                }
+            }
+            if indices.count % 3 != 0 {
+                indices.removeLast(indices.count % 3)
+            }
+            var clean: [UInt32] = []
+            clean.reserveCapacity(indices.count)
+            var dropped = 0
+            for t in stride(from: 0, to: indices.count, by: 3) {
+                let a = indices[t]
+                let b = indices[t + 1]
+                let c = indices[t + 2]
+                if Int(a) < verts.count, Int(b) < verts.count, Int(c) < verts.count {
+                    clean.append(a); clean.append(b); clean.append(c)
+                } else {
+                    dropped += 1
+                }
+            }
+            if clean.isEmpty { continue }
+            sanitizedTriangleDropCount += dropped
+            let indexCount = clean.count
+            guard let vb = device.makeBuffer(bytes: verts, length: verts.count * MemoryLayout<GPUVertex>.stride, options: [.storageModeShared]) else {
+                continue
+            }
+            let ibLen = clean.count * MemoryLayout<UInt32>.stride
+            guard let ib = device.makeBuffer(bytes: clean, length: ibLen, options: [.storageModeShared]) else {
+                continue
+            }
 
             var expanded: [GPUVertex] = []
-            expanded.reserveCapacity(prim.indices.count)
-            for idx in prim.indices {
+            expanded.reserveCapacity(clean.count)
+            for idx in clean {
                 let i = Int(idx)
                 if i >= 0 && i < verts.count {
                     expanded.append(verts[i])
@@ -193,6 +240,7 @@ final class StaticModelRenderer {
                 indexCount: indexCount,
                 nonIndexedVertexBuffer: nvb,
                 nonIndexedVertexCount: expanded.count,
+                vertexStrideBytes: MemoryLayout<GPUVertex>.stride,
                 baseColorFactor: prim.material.baseColorFactor,
                 metallicFactor: prim.material.metallicFactor,
                 roughnessFactor: prim.material.roughnessFactor,
@@ -212,7 +260,10 @@ final class StaticModelRenderer {
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
 
-        for sm in submeshes {
+        for sm in submeshes where sm.indexCount > 0 {
+            let maxIndexCountByBuffer = sm.indexBuffer.length / MemoryLayout<UInt32>.stride
+            let safeIndexCount = min(sm.indexCount, maxIndexCountByBuffer)
+            if safeIndexCount <= 0 { continue }
             var u = PBRTypes.Uniforms(
                 mvp: mvp,
                 model: params.model,
@@ -249,7 +300,7 @@ final class StaticModelRenderer {
             } else {
                 encoder.drawIndexedPrimitives(
                     type: .triangle,
-                    indexCount: sm.indexCount,
+                    indexCount: safeIndexCount,
                     indexType: .uint32,
                     indexBuffer: sm.indexBuffer,
                     indexBufferOffset: 0
@@ -274,11 +325,14 @@ final class StaticModelRenderer {
         var u = ShadowUniforms(lightViewProj: lightViewProj, model: model)
         encoder.setVertexBytes(&u, length: MemoryLayout<ShadowUniforms>.stride, index: 1)
 
-        for sm in submeshes {
+        for sm in submeshes where sm.indexCount > 0 {
+            let maxIndexCountByBuffer = sm.indexBuffer.length / MemoryLayout<UInt32>.stride
+            let safeIndexCount = min(sm.indexCount, maxIndexCountByBuffer)
+            if safeIndexCount <= 0 { continue }
             encoder.setVertexBuffer(sm.vertexBuffer, offset: 0, index: 0)
             encoder.drawIndexedPrimitives(
                 type: .triangle,
-                indexCount: sm.indexCount,
+                indexCount: safeIndexCount,
                 indexType: .uint32,
                 indexBuffer: sm.indexBuffer,
                 indexBufferOffset: 0
@@ -299,12 +353,21 @@ final class StaticModelRenderer {
         debugMode: UInt32 = 0
     ) {
         guard instanceCount > 0 else { return }
+        let stride = MemoryLayout<simd_float4x4>.stride
+        let maxInstancesByBuffer = instanceModels.length / max(1, stride)
+        let safeInstanceCount = min(instanceCount, maxInstancesByBuffer)
+        if safeInstanceCount <= 0 { return }
 
         encoder.setRenderPipelineState(instancedPipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setVertexBuffer(instanceModels, offset: 0, index: 2)
 
-        for sm in submeshes {
+        for sm in submeshes where sm.indexCount > 0 && sm.nonIndexedVertexCount > 0 {
+            let maxVerts = sm.nonIndexedVertexBuffer.length / max(1, sm.vertexStrideBytes)
+            var safeVertCount = min(sm.nonIndexedVertexCount, maxVerts)
+            // For triangle lists, Metal debug validation expects vertexCount to be a multiple of 3.
+            safeVertCount = (safeVertCount / 3) * 3
+            if safeVertCount <= 0 { continue }
             var u = PBRTypes.InstancedUniforms(
                 viewProj: viewProj,
                 lightViewProj: lightViewProj,
@@ -316,7 +379,8 @@ final class StaticModelRenderer {
                 debugMode: debugMode
             )
 
-            encoder.setVertexBuffer(sm.vertexBuffer, offset: 0, index: 0)
+            // Some GLBs ship with problematic index buffers; for instancing prefer non-indexed draw (expanded triangles).
+            encoder.setVertexBuffer(sm.nonIndexedVertexBuffer, offset: 0, index: 0)
             encoder.setVertexBytes(&u, length: MemoryLayout<PBRTypes.InstancedUniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<PBRTypes.InstancedUniforms>.stride, index: 0)
             var keyL = SceneLighting.KeyLightGPUBytes(keyLight)
@@ -329,13 +393,11 @@ final class StaticModelRenderer {
             if let st = shadowTexture { encoder.setFragmentTexture(st, index: 3) }
             if let ss = shadowSampler { encoder.setFragmentSamplerState(ss, index: 2) }
 
-            encoder.drawIndexedPrimitives(
+            encoder.drawPrimitives(
                 type: .triangle,
-                indexCount: sm.indexCount,
-                indexType: .uint32,
-                indexBuffer: sm.indexBuffer,
-                indexBufferOffset: 0,
-                instanceCount: instanceCount
+                vertexStart: 0,
+                vertexCount: safeVertCount,
+                instanceCount: safeInstanceCount
             )
         }
     }
@@ -347,6 +409,10 @@ final class StaticModelRenderer {
         instanceCount: Int
     ) {
         guard instanceCount > 0 else { return }
+        let stride = MemoryLayout<simd_float4x4>.stride
+        let maxInstancesByBuffer = instanceModels.length / max(1, stride)
+        let safeInstanceCount = min(instanceCount, maxInstancesByBuffer)
+        if safeInstanceCount <= 0 { return }
 
         struct ShadowU {
             var lightViewProj: simd_float4x4
@@ -357,15 +423,17 @@ final class StaticModelRenderer {
         encoder.setVertexBytes(&u, length: MemoryLayout<ShadowU>.stride, index: 1)
         encoder.setVertexBuffer(instanceModels, offset: 0, index: 2)
 
-        for sm in submeshes {
-            encoder.setVertexBuffer(sm.vertexBuffer, offset: 0, index: 0)
-            encoder.drawIndexedPrimitives(
+        for sm in submeshes where sm.indexCount > 0 && sm.nonIndexedVertexCount > 0 {
+            let maxVerts = sm.nonIndexedVertexBuffer.length / max(1, sm.vertexStrideBytes)
+            var safeVertCount = min(sm.nonIndexedVertexCount, maxVerts)
+            safeVertCount = (safeVertCount / 3) * 3
+            if safeVertCount <= 0 { continue }
+            encoder.setVertexBuffer(sm.nonIndexedVertexBuffer, offset: 0, index: 0)
+            encoder.drawPrimitives(
                 type: .triangle,
-                indexCount: sm.indexCount,
-                indexType: .uint32,
-                indexBuffer: sm.indexBuffer,
-                indexBufferOffset: 0,
-                instanceCount: instanceCount
+                vertexStart: 0,
+                vertexCount: safeVertCount,
+                instanceCount: safeInstanceCount
             )
         }
     }

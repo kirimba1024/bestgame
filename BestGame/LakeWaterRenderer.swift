@@ -19,6 +19,7 @@ final class LakeWaterRenderer {
     // Must match WaterUniforms in WaterRiver.metal
     private struct WaterUniforms {
         var viewProj: simd_float4x4
+        var invViewProj: simd_float4x4
         var model: simd_float4x4
         var normalMatrix: simd_float4x4
         var camAndTime: SIMD4<Float>
@@ -137,8 +138,10 @@ final class LakeWaterRenderer {
             * simd_float4x4.scale(SIMD3(cfg.halfSize * 2, 1, cfg.halfSize * 2))
         let normalMatrix = model.inverse.transpose
         let sun = length(sunDirectionWS) > 1e-5 ? normalize(sunDirectionWS) : SIMD3<Float>(0.38, 0.92, 0.28)
+        let invViewProj = viewProj.inverse
         var u = WaterUniforms(
             viewProj: viewProj,
+            invViewProj: invViewProj,
             model: model,
             normalMatrix: normalMatrix,
             camAndTime: SIMD4(cameraPos.x, cameraPos.y, cameraPos.z, time),

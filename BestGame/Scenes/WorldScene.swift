@@ -2,7 +2,7 @@ import Metal
 import MetalKit
 import simd
 
-/// WorldScene: террейн + трава + вода + берёзовый лес. Без зависимостей от demo-полки.
+/// WorldScene: террейн + процедурный фолиаж + вода. Без зависимостей от demo-полки.
 final class WorldScene: RenderScene {
     let config: WorldConfig
 
@@ -18,7 +18,7 @@ final class WorldScene: RenderScene {
     init(config: WorldConfig = .default) {
         self.config = config
         terrainSystem = WorldTerrainSystem(worldID: config.worldID, heightmapRevision: config.heightmapRevision, config: config.terrain)
-        self.hudLine = "World: terrain + birch forest + water"
+        self.hudLine = "World: terrain + foliage + water"
     }
 
     func buildIfNeeded(
@@ -41,7 +41,11 @@ final class WorldScene: RenderScene {
             waterSystem = WorldWaterSystem(lake: config.lake, puddles: config.puddles, terrain: terrainSampler)
         }
         if foliageSystem == nil {
-            foliageSystem = WorldFoliageSystem(terrain: terrainSampler, birchAssetName: config.foliage.birchAssetName)
+            foliageSystem = WorldFoliageSystem(
+                terrain: terrainSampler,
+                proceduralTreesEnabled: config.foliage.proceduralTreesEnabled,
+                proceduralTreeMaxInstances: config.foliage.proceduralTreeMaxInstances
+            )
         }
         if showcaseSystem == nil {
             showcaseSystem = WorldShowcaseSystem(terrain: terrainSampler)
@@ -51,7 +55,10 @@ final class WorldScene: RenderScene {
         showcaseSystem?.buildIfNeeded(device: device, library: library, colorPixelFormat: colorPixelFormat, depthPixelFormat: depthPixelFormat, environment: environment)
 
         if let line = showcaseSystem?.hudLine {
-            self.hudLine = "World: terrain + birch forest + water · \(line)"
+            self.hudLine = "World: terrain + foliage + water · \(line)"
+        }
+        if let foliageLine = foliageSystem?.hudLine {
+            self.hudLine = (self.hudLine ?? "World") + " · \(foliageLine)"
         }
     }
 
@@ -79,7 +86,7 @@ final class WorldScene: RenderScene {
         return (showcase, anchor)
     }
 
-    func draw(
+    func drawOpaque(
         encoder: MTLRenderCommandEncoder,
         proj: simd_float4x4,
         view: simd_float4x4,
@@ -91,7 +98,6 @@ final class WorldScene: RenderScene {
         shadowTexture: MTLTexture?,
         shadowSampler: MTLSamplerState?,
         environment: EnvironmentMap,
-        depthTexture: MTLTexture?,
         drawableSize: CGSize
     ) {
         terrainSystem.draw(
@@ -104,24 +110,6 @@ final class WorldScene: RenderScene {
             shadowSampler: shadowSampler,
             time: time
         )
-
-        waterSystem?.draw(
-            encoder: encoder,
-            viewProj: viewProj,
-            cameraPos: cameraPos,
-            time: time,
-            keyLight: keyLight,
-            depthTexture: depthTexture,
-            environment: environment,
-            drawableSize: drawableSize
-        )
-
-        // Water is blended and disables depth writes. Restore opaque depth + raster state before drawing opaque meshes.
-        if let ods = opaqueDepthState {
-            encoder.setDepthStencilState(ods)
-        }
-        encoder.setCullMode(.back)
-        encoder.setFrontFacing(.counterClockwise)
 
         foliageSystem?.draw(
             encoder: encoder,
@@ -149,6 +137,29 @@ final class WorldScene: RenderScene {
             keyLight: keyLight,
             shadowTexture: shadowTexture,
             shadowSampler: shadowSampler
+        )
+    }
+
+    func drawTransparent(
+        encoder: MTLRenderCommandEncoder,
+        viewProj: simd_float4x4,
+        lightViewProj: simd_float4x4,
+        cameraPos: SIMD3<Float>,
+        time: Float,
+        keyLight: SceneLighting.KeyLightFrame,
+        environment: EnvironmentMap,
+        depthTextureForSampling: MTLTexture?,
+        drawableSize: CGSize
+    ) {
+        waterSystem?.draw(
+            encoder: encoder,
+            viewProj: viewProj,
+            cameraPos: cameraPos,
+            time: time,
+            keyLight: keyLight,
+            depthTexture: depthTextureForSampling,
+            environment: environment,
+            drawableSize: drawableSize
         )
     }
 }

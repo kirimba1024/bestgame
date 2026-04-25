@@ -20,7 +20,8 @@ protocol RenderScene: AnyObject {
 
     func effectsAnchor(time: Float) -> (showcaseFocal: SIMD3<Float>, effectsAnchor: SIMD3<Float>)
 
-    func draw(
+    /// Opaque geometry pass (writes depth).
+    func drawOpaque(
         encoder: MTLRenderCommandEncoder,
         proj: simd_float4x4,
         view: simd_float4x4,
@@ -32,7 +33,19 @@ protocol RenderScene: AnyObject {
         shadowTexture: MTLTexture?,
         shadowSampler: MTLSamplerState?,
         environment: EnvironmentMap,
-        depthTexture: MTLTexture?,
+        drawableSize: CGSize
+    )
+
+    /// Transparent pass (must not sample the depth attachment; use `depthTextureForSampling`).
+    func drawTransparent(
+        encoder: MTLRenderCommandEncoder,
+        viewProj: simd_float4x4,
+        lightViewProj: simd_float4x4,
+        cameraPos: SIMD3<Float>,
+        time: Float,
+        keyLight: SceneLighting.KeyLightFrame,
+        environment: EnvironmentMap,
+        depthTextureForSampling: MTLTexture?,
         drawableSize: CGSize
     )
 }

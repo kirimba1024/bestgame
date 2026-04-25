@@ -23,7 +23,9 @@ struct WorldConfig {
     var foliage = FoliageConfig()
 
     struct FoliageConfig {
-        var birchAssetName: String = "BirchTree"
+        /// Процедурный фолиаж: деревья/кусты/трава генерятся кодом, без GLB-ассетов.
+        var proceduralTreesEnabled: Bool = true
+        var proceduralTreeMaxInstances: Int = 640
         var grassWindEnabled: Bool = true
     }
 

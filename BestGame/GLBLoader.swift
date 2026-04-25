@@ -9,6 +9,18 @@ enum GLBLoaderError: Error {
 }
 
 final class GLBLoader {
+    static func staticMeshCount(named resourceName: String, in bundle: Bundle = .main) throws -> Int {
+        let url =
+            bundle.url(forResource: resourceName, withExtension: "glb")
+            ?? bundle.url(forResource: resourceName, withExtension: nil)
+        guard let url else {
+            throw GLBLoaderError.missing("Bundle resource \(resourceName)(.glb) not found")
+        }
+        let data = try Data(contentsOf: url)
+        let (jsonChunk, _) = try GLBBinary.parseContainer(data)
+        let gltf = try JSONDecoder().decode(GLTF.self, from: jsonChunk)
+        return gltf.meshes.count
+    }
     static func loadStaticMesh(named resourceName: String, in bundle: Bundle = .main) throws -> GLBStaticMesh {
         // Xcode can import the file as "Fox" (no extension) depending on settings.
         let url =
@@ -60,6 +72,15 @@ final class GLBLoader {
     }
 
     static func loadStaticModel(named resourceName: String, in bundle: Bundle = .main) throws -> GLBStaticModel {
+        return try loadStaticModel(named: resourceName, meshIndex: 0, in: bundle)
+    }
+
+    static func loadStaticModel(named resourceName: String, meshIndex: Int, in bundle: Bundle = .main) throws -> GLBStaticModel {
+        let (m, _) = try loadStaticModelWithReport(named: resourceName, meshIndex: meshIndex, in: bundle)
+        return m
+    }
+
+    static func loadStaticModelWithReport(named resourceName: String, meshIndex: Int, in bundle: Bundle = .main) throws -> (model: GLBStaticModel, report: GLTFSanitize.Report) {
         let url =
             bundle.url(forResource: resourceName, withExtension: "glb")
             ?? bundle.url(forResource: resourceName, withExtension: nil)
@@ -68,33 +89,37 @@ final class GLBLoader {
             throw GLBLoaderError.missing("Bundle resource \(resourceName)(.glb) not found")
         }
         let data = try Data(contentsOf: url)
-        return try parseGLBStaticModel(data: data)
+        return try parseGLBStaticModelWithReport(data: data, meshIndex: meshIndex)
     }
 
-    private static func parseGLBStaticModel(data: Data) throws -> GLBStaticModel {
+    private static func parseGLBStaticModelWithReport(data: Data, meshIndex: Int) throws -> (model: GLBStaticModel, report: GLTFSanitize.Report) {
         let (jsonChunk, binChunk) = try GLBBinary.parseContainer(data)
         let gltf = try JSONDecoder().decode(GLTF.self, from: jsonChunk)
 
-        // Load all suitable TRIANGLES primitives from the first mesh.
+        // Load all suitable TRIANGLES primitives from the selected mesh.
         // glTF commonly splits a mesh into multiple primitives (materials, attribute sets).
-        guard let mesh0 = gltf.meshes.first else {
+        guard !gltf.meshes.isEmpty else {
             throw GLBLoaderError.missing("No meshes found")
         }
+        let mi = max(0, min(meshIndex, gltf.meshes.count - 1))
+        let mesh0 = gltf.meshes[mi]
 
         var prims: [GLBStaticPrimitive] = []
         prims.reserveCapacity(mesh0.primitives.count)
+        var total = GLTFSanitize.Report()
 
         for prim in mesh0.primitives {
             // If any primitive decode fails, skip it (we're building a best-effort static model).
             guard let decoded = try? GLTFPrimitives.decodeStaticPrimitive(gltf: gltf, prim: prim, bin: binChunk) else { continue }
             prims.append(GLBStaticPrimitive(vertices: decoded.vertices, indices: decoded.indices, material: decoded.material))
+            total.add(decoded.sanitizeReport)
         }
 
         if prims.isEmpty {
             throw GLBLoaderError.missing("No suitable primitives found for static model")
         }
 
-        return GLBStaticModel(primitives: prims)
+        return (GLBStaticModel(primitives: prims), total)
     }
 
     private static func parseGLBSkinned(data: Data) throws -> GLBSkinnedModel {

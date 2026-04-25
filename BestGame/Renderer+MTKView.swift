@@ -49,6 +49,7 @@ extension Renderer {
             drawShadowCasters(encoder: encoder, lightViewProj: lightViewProj, time: step.time)
         }
 
+        // Pass 1: opaque scene (writes depth)
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             commandBuffer.commit()
             return
@@ -61,7 +62,7 @@ extension Renderer {
         let debugMode: UInt32 = debugShowShadowFactor ? 1 : 0
 
         if hasRenderableScene {
-            scene.draw(
+            scene.drawOpaque(
                 encoder: encoder,
                 proj: mats.proj,
                 view: mats.view,
@@ -73,7 +74,6 @@ extension Renderer {
                 shadowTexture: shadowMap.texture,
                 shadowSampler: shadowMap.compareSampler,
                 environment: environmentMap,
-                depthTexture: depthTexture,
                 drawableSize: view.drawableSize
             )
             // Restore default depth state for anything else (effects overlay, etc.).
@@ -93,15 +93,52 @@ extension Renderer {
             solidPass.encodeRotatingCube(encoder: encoder, proj: mats.proj, view: mats.view, angle: step.angle)
         }
 
-        frameEffects.encodeAllPostOpaqueDraws(encoder: encoder, context: effectContext)
+        encoder.endEncoding()
+
+        // Copy depth for sampling (avoid sampling depth attachment in same pass).
+        if let src = depthTexture, let dst = depthTextureForSampling,
+           let blit = commandBuffer.makeBlitCommandEncoder()
+        {
+            blit.copy(from: src, sourceSlice: 0, sourceLevel: 0, sourceOrigin: .init(x: 0, y: 0, z: 0), sourceSize: .init(width: src.width, height: src.height, depth: 1),
+                      to: dst, destinationSlice: 0, destinationLevel: 0, destinationOrigin: .init(x: 0, y: 0, z: 0))
+            blit.endEncoding()
+        }
+
+        // Pass 2: transparent (water) + post-opaque FX (particles etc.), loading color+depth.
+        let transparentDesc = MTLRenderPassDescriptor()
+        transparentDesc.colorAttachments[0].texture = drawable.texture
+        transparentDesc.colorAttachments[0].loadAction = .load
+        transparentDesc.colorAttachments[0].storeAction = .store
+        if let depthTexture {
+            transparentDesc.depthAttachment.texture = depthTexture
+            transparentDesc.depthAttachment.loadAction = .load
+            transparentDesc.depthAttachment.storeAction = .store
+        }
+
+        if let transparentEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: transparentDesc) {
+            transparentEncoder.setDepthStencilState(depthState)
+            applyBaseRasterState(transparentEncoder)
+            scene.drawTransparent(
+                encoder: transparentEncoder,
+                viewProj: mats.viewProj,
+                lightViewProj: lightViewProj,
+                cameraPos: camera.position,
+                time: step.time,
+                keyLight: keyLight,
+                environment: environmentMap,
+                depthTextureForSampling: depthTextureForSampling,
+                drawableSize: view.drawableSize
+            )
+
+            frameEffects.encodeAllPostOpaqueDraws(encoder: transparentEncoder, context: effectContext)
+            transparentEncoder.endEncoding()
+        }
 
         let axisNDCs = WorldAxesGizmo.axisLabelNDCs(proj: mats.proj, view: mats.view)
         let sink = hudSink
         DispatchQueue.main.async {
             sink?.updateAxisLegendNDCPositions(x: axisNDCs.x, y: axisNDCs.y, z: axisNDCs.z)
         }
-
-        encoder.endEncoding()
 
         sunOcularGlare.encode(
             commandBuffer: commandBuffer,

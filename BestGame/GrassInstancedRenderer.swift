@@ -210,7 +210,7 @@ final class GrassInstancedRenderer {
 
         let sun = normalize(sunDirectionWS)
         let wind = 0.42 + 0.08 * sin(time * 0.7)
-        var u = GrassUniforms(
+        let u = GrassUniforms(
             viewProj: viewProj,
             cam_time: SIMD4(cameraPos.x, cameraPos.y, cameraPos.z, time),
             sun_wind: SIMD4(sun.x, sun.y, sun.z, wind),

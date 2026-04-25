@@ -18,6 +18,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     var depthState: MTLDepthStencilState?
     var skyDepthState: MTLDepthStencilState?
     var depthTexture: MTLTexture?
+    /// Copy of depth used for sampling in water (avoid sampling the depth attachment directly).
+    var depthTextureForSampling: MTLTexture?
 
     // MARK: - Frame / input
 

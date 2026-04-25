@@ -6,6 +6,7 @@ enum GLTFPrimitives {
         var vertices: [GLBStaticVertex]
         var indices: [UInt32]
         var material: GLBPBRMaterialMR
+        var sanitizeReport: GLTFSanitize.Report
     }
 
     static func decodeStaticPrimitive(gltf: GLTF, prim: GLTF.Primitive, bin: Data) throws -> StaticPrimitiveData {
@@ -17,38 +18,47 @@ enum GLTFPrimitives {
             throw GLBLoaderError.missing("POSITION attribute not found")
         }
 
-        let positions = try GLTFAccessors.readVec3Float(gltf: gltf, accessorIndex: posAcc, bin: bin)
+        var report = GLTFSanitize.Report()
+        let positionsRaw = try GLTFAccessors.readVec3Float(gltf: gltf, accessorIndex: posAcc, bin: bin)
+        let positions = GLTFSanitize.sanitizePositions(positionsRaw, report: &report)
         guard !positions.isEmpty else {
             throw GLBLoaderError.missing("POSITION accessor is empty")
         }
 
-        let normals: [SIMD3<Float>]
+        var normals: [SIMD3<Float>]
         if let norAcc = prim.attributes["NORMAL"] {
-            normals = try GLTFAccessors.readVec3Normalized(gltf: gltf, accessorIndex: norAcc, bin: bin)
-            guard normals.count == positions.count else {
+            let nRaw = try GLTFAccessors.readVec3Normalized(gltf: gltf, accessorIndex: norAcc, bin: bin)
+            guard nRaw.count == positions.count else {
                 throw GLBLoaderError.invalidChunk
             }
+            normals = GLTFSanitize.sanitizeNormals(nRaw, report: &report)
         } else {
-            normals = Array(repeating: SIMD3<Float>(0, 1, 0), count: positions.count)
+            normals = Array(repeating: SIMD3<Float>(0, 0, 0), count: positions.count)
         }
 
-        let uvs: [SIMD2<Float>]
+        var uvs: [SIMD2<Float>]
         if let uvAcc = prim.attributes["TEXCOORD_0"] {
-            uvs = try GLTFAccessors.readVec2Float(gltf: gltf, accessorIndex: uvAcc, bin: bin)
-            guard uvs.count == positions.count else {
+            let uvRaw = try GLTFAccessors.readVec2Float(gltf: gltf, accessorIndex: uvAcc, bin: bin)
+            guard uvRaw.count == positions.count else {
                 throw GLBLoaderError.invalidChunk
             }
+            uvs = GLTFSanitize.sanitizeUVs(uvRaw, report: &report)
         } else {
             uvs = Array(repeating: SIMD2<Float>(0, 0), count: positions.count)
         }
 
-        let indices: [UInt32]
+        var indices: [UInt32]
         if let idxAccessorIndex = prim.indices {
             indices = try GLTFAccessors.readIndices(gltf: gltf, accessorIndex: idxAccessorIndex, bin: bin)
-            guard indices.count % 3 == 0 else { throw GLBLoaderError.invalidChunk }
-            if let maxIdx = indices.max(), maxIdx >= UInt32(positions.count) { throw GLBLoaderError.invalidChunk }
         } else {
             indices = (0..<positions.count).map { UInt32($0) }
+        }
+        indices = GLTFSanitize.sanitizeTriangleIndices(indices, vertexCount: positions.count, report: &report)
+        indices = GLTFSanitize.dropDegenerateTriangles(indices, positions: positions, report: &report)
+        guard !indices.isEmpty else { throw GLBLoaderError.invalidChunk }
+
+        if prim.attributes["NORMAL"] == nil {
+            normals = GLTFSanitize.computeNormals(positions: positions, indices: indices)
         }
 
         var verts: [GLBStaticVertex] = []
@@ -58,7 +68,7 @@ enum GLTFPrimitives {
         }
 
         let mat = try GLTFMaterials.extractPBRMaterialMR(gltf: gltf, primitive: prim, bin: bin, bundle: .main)
-        return StaticPrimitiveData(vertices: verts, indices: indices, material: mat)
+        return StaticPrimitiveData(vertices: verts, indices: indices, material: mat, sanitizeReport: report)
     }
 }
 

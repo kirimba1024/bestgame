@@ -12,6 +12,7 @@ struct WaterVertexIn {
 
 struct WaterUniforms {
     float4x4 viewProj;
+    float4x4 invViewProj;
     float4x4 model;
     float4x4 normalMatrix;
     float4 camAndTime;
@@ -28,8 +29,9 @@ struct WaterVertexOut {
     float4 clipPos;
 };
 
-// Depth buffer is not a color signal; linear filtering can produce blocky shimmering near edges.
-constexpr sampler kDepthSampler(coord::normalized, filter::nearest, address::clamp_to_edge);
+// Depth buffer is not a color signal; nearest can cause visible macro-blocks when used for thickness/foam.
+// We use linear + small gather to reduce “squares” on close-up water.
+constexpr sampler kDepthSampler(coord::normalized, filter::linear, address::clamp_to_edge);
 constexpr sampler kEnvSampler(coord::normalized, address::clamp_to_edge, filter::linear, mip_filter::linear);
 
 inline float3 waterWaveNormal(float2 xz, float t, float flow) {
@@ -78,36 +80,58 @@ fragment float4 water_river_fs(
     depth2d<float> sceneDepth [[texture(0)]],
     texture2d<float> envTex [[texture(1)]]
 ) {
-    float invW = u.nearFarInvWInvH.z;
-    float invH = u.nearFarInvWInvH.w;
+    // Use clip-space UV, not `in.position`, to avoid blocky artifacts when drawable/depth resolutions differ.
+    float3 ndc = in.clipPos.xyz / max(1e-6, in.clipPos.w);
+    float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    float2 depthSize = float2(sceneDepth.get_width(), sceneDepth.get_height());
+    float2 texel = 1.0 / depthSize;
 
-    // Sample at pixel center to reduce shimmering on camera motion.
-    float2 uv = (in.position.xy + 0.5) * float2(invW, invH);
-    float sceneD = sceneDepth.sample(kDepthSampler, uv);
+    // Temporal stability: snap depth sampling to pixel centers.
+    float2 px = uv * depthSize;
+    uv = (floor(px) + 0.5) * texel;
+    // Small 2x2 gather to suppress block artifacts near the camera.
+    float sceneD =
+        0.25 * (
+            sceneDepth.sample(kDepthSampler, uv + texel * float2(-0.25, -0.25)) +
+            sceneDepth.sample(kDepthSampler, uv + texel * float2( 0.25, -0.25)) +
+            sceneDepth.sample(kDepthSampler, uv + texel * float2(-0.25,  0.25)) +
+            sceneDepth.sample(kDepthSampler, uv + texel * float2( 0.25,  0.25))
+        );
 
-    float waterD = in.clipPos.z / max(1e-6, in.clipPos.w);
-    float dd = abs(sceneD - waterD);
-    // Anti-aliased foam edge band (depth discontinuities shimmer otherwise).
-    float w = max(0.00025, fwidth(dd) * 2.5);
-    float foam = 1.0 - smoothstep(0.0020 - w, 0.0020 + w, dd);
+    // Reconstruct scene world position from depth (more stable than clip-depth heuristics).
+    float2 ndcXY = float2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    float4 clip = float4(ndcXY, sceneD, 1.0);
+    float4 ws4 = u.invViewProj * clip;
+    float3 scenePosWS = ws4.xyz / max(1e-6, ws4.w);
+
+    float3 Vdir = normalize(in.worldPos - u.camAndTime.xyz);
+    float thicknessM = max(0.0, dot(scenePosWS - in.worldPos, Vdir));
+    // Clamp to a sane range for stability.
+    thicknessM = clamp(thicknessM, 0.0, 25.0);
+    float thickness01 = saturate(thicknessM / 6.0);
+
+    // Foam: strongest at intersections (thin water). Use derivatives for stability.
+    float fw = max(0.001, fwidth(thicknessM));
+    float foam = 1.0 - smoothstep(0.08 - fw, 0.08 + fw, thicknessM);
     foam *= foam;
     foam *= saturate(u.foamStrength);
-
-    // Depth thickness proxy (in clip depth space): how much geometry is behind the water.
-    // This drives transparency so shallow water reveals the bottom.
-    float behind = max(0.0, sceneD - waterD);
-    float thickness = saturate(behind * 120.0);
 
     float3 N = normalize(in.normalWS);
     float3 V = normalize(u.camAndTime.xyz - in.worldPos);
     float3 Lsun = (length(keyL.dirWS) > 1e-5) ? normalize(keyL.dirWS) : kSunDirFallback;
     float3 sunDiskHDR = (length(keyL.skyDiskRadianceHDR) > 1e-5) ? keyL.skyDiskRadianceHDR : float3(6.0, 5.7, 5.1);
 
-    float NdotV = saturate(dot(N, V));
+    // Specular AA: high-frequency normals + high exponent cause shimmering close to the water.
+    // Use normal derivatives to widen the lobe in screen-space.
+    float nVar = length(fwidth(N));
+    float aa = saturate(nVar * 6.0); // tuned: 0..1
+    float3 Nf = normalize(mix(N, float3(0.0, 1.0, 0.0), aa * 0.55));
+
+    float NdotV = saturate(dot(Nf, V));
     float3 F0 = float3(0.02);
     float3 F = fresnelSchlick(NdotV, F0);
 
-    float3 R = reflect(-V, N);
+    float3 R = reflect(-V, Nf);
     float2 uvR = equirectUVFromDir(normalize(R));
     int envMip = max(0, int(envTex.get_num_mip_levels()) - 4);
     float3 refl = envTex.sample(kEnvSampler, uvR, level(envMip)).rgb;
@@ -117,17 +141,19 @@ fragment float4 water_river_fs(
     float facing = pow(saturate(N.y * 0.5 + 0.5), 1.4);
     float3 baseFacing = mix(deep, shallow, facing);
     // More shallow tint when thickness is small (i.e. bottom is close).
-    float3 base = mix(shallow, baseFacing, thickness);
+    float3 base = mix(shallow, baseFacing, thickness01);
 
-    float sunGlint = pow(saturate(dot(R, Lsun)), 64.0);
+    float shininess = mix(64.0, 18.0, aa);
+    float sunGlint = pow(saturate(dot(R, Lsun)), shininess);
     float3 specSun = sunDiskHDR * sunGlint * 0.018;
 
     float wrap = saturate(dot(N, Lsun) * 0.5 + 0.5);
     float3 diffSun = base * wrap * float3(0.35, 0.42, 0.38);
 
-    // Transmission: shallow water is brighter and more transparent.
-    float transGain = mix(0.72, 0.40, thickness);
-    float3 transmit = (base * 0.35 + diffSun) * transGain;
+    // Beer-Lambert style absorption: thickness in meters.
+    float3 absorb = float3(0.22, 0.10, 0.06);
+    float3 transmitCol = exp(-absorb * thicknessM);
+    float3 transmit = (base * 0.55 + diffSun) * transmitCol;
 
     float3 col = transmit;
     col = mix(col, refl, F * 0.85);
@@ -137,7 +163,7 @@ fragment float4 water_river_fs(
     col = mix(col, foamCol, foam * 0.55);
 
     // Alpha: shallow => more transparent, deep => less.
-    float alphaDepth = mix(0.26, 0.78, thickness);
+    float alphaDepth = mix(0.22, 0.80, thickness01);
     float alpha = mix(alphaDepth, 0.94, foam * 0.45) * (0.78 + 0.22 * NdotV);
     alpha = saturate(alpha);
 
