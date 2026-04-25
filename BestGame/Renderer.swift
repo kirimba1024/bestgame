@@ -32,6 +32,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     let environmentMap: EnvironmentMap
     let shadowMap: ShadowMapRenderer
     var skyRenderer: SkyRenderer?
+    let frameEffects: FrameEffectsCoordinator
+    let sunOcularGlare: SunOcularGlarePass
 
     // MARK: - Scene (lazy GPU wrappers)
 
@@ -47,6 +49,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Пол и сферы-пробы вне ряда слотов (отдельные матрицы).
     var groundPlaneRenderer: StaticModelRenderer?
     var materialProbeRenderer: StaticModelRenderer?
+    var grassRenderer: GrassInstancedRenderer?
+    var riverWaterRenderer: RiverWaterRenderer?
 
     // MARK: - HUD / debug
 
@@ -79,6 +83,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         shadowMap = ShadowMapRenderer(device: device)
         camera = FlyCamera()
         scenePlacement = DemoScenePlacementProvider()
+        frameEffects = FrameEffectsCoordinator(device: device)
+        sunOcularGlare = SunOcularGlarePass(device: device)
 
         super.init()
 

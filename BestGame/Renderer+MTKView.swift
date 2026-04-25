@@ -50,7 +50,7 @@ extension Renderer {
             renderPassDescriptor.depthAttachment.texture = depthTexture
             renderPassDescriptor.depthAttachment.clearDepth = 1.0
             renderPassDescriptor.depthAttachment.loadAction = .clear
-            renderPassDescriptor.depthAttachment.storeAction = .dontCare
+            renderPassDescriptor.depthAttachment.storeAction = .store
         }
 
         let time = Float(now - startTime)
@@ -75,6 +75,46 @@ extension Renderer {
             skinnedRendererCount: skinnedRenderers.count,
             hasFoxMeshFallback: solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0
         )
+
+        let showcaseFocal: SIMD3<Float>
+        let effectsAnchor: SIMD3<Float>
+        if hasRenderableScene {
+            let cx = (shelf.slotSpanMinX + shelf.slotSpanMaxX) * 0.5
+            let z = scenePlacement.shelfConfig.sceneDepthZ + 4.3
+            showcaseFocal = SIMD3(
+                cx + sin(time * 0.95) * 2.4,
+                4.05 + sin(time * 1.25) * 0.45,
+                z + cos(time * 0.72) * 1.6
+            )
+            // Вбок от полки по +X за крайний слот — частицы/светлячки.
+            let lateral = shelf.slotSpanMaxX + 22
+            effectsAnchor = SIMD3(
+                lateral,
+                showcaseFocal.y - 0.6,
+                showcaseFocal.z - 7
+            )
+        } else {
+            showcaseFocal = SIMD3(sin(time * 0.9) * 1.2, 1.85 + sin(time * 1.1) * 0.2, -4.2 + cos(time * 0.5) * 0.35)
+            effectsAnchor = showcaseFocal + SIMD3(6, 0, -3)
+        }
+
+        let camRight = normalize(SIMD3<Float>(viewM.columns.0.x, viewM.columns.0.y, viewM.columns.0.z))
+        let camUp = normalize(SIMD3<Float>(viewM.columns.1.x, viewM.columns.1.y, viewM.columns.1.z))
+        let effectContext = FrameEffectContext(
+            time: time,
+            deltaTime: dt,
+            viewProjection: viewProj,
+            viewMatrix: viewM,
+            projectionMatrix: proj,
+            cameraPosition: camera.position,
+            cameraRight: camRight,
+            cameraUp: camUp,
+            showcaseFocalPoint: showcaseFocal,
+            effectsAnchorPoint: effectsAnchor,
+            hasSceneContent: hasRenderableScene
+        )
+        frameEffects.encodeAllCompute(into: commandBuffer, context: effectContext)
+
         let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS, shelf: shelf, time: time)
 
         shadowMap.render(into: commandBuffer) { encoder in
@@ -191,6 +231,31 @@ extension Renderer {
                     debugMode: debugMode
                 )
             )
+            if let depthTexture, let river = riverWaterRenderer {
+                river.draw(
+                    encoder: encoder,
+                    viewProj: viewProj,
+                    cameraPos: camera.position,
+                    time: time,
+                    sunDirectionWS: keyLight.directionWS,
+                    viewportWidth: Float(view.drawableSize.width),
+                    viewportHeight: Float(view.drawableSize.height),
+                    shelf: shelf,
+                    config: scenePlacement.shelfConfig,
+                    depthTexture: depthTexture,
+                    environmentTexture: environmentMap.texture,
+                    environmentSampler: environmentMap.sampler,
+                    keyLightBytes: SceneLighting.KeyLightGPUBytes(keyLight)
+                )
+            }
+            grassRenderer?.ensureInstances(shelf: shelf, config: scenePlacement.shelfConfig)
+            grassRenderer?.draw(
+                encoder: encoder,
+                viewProj: viewProj,
+                cameraPos: camera.position,
+                time: time,
+                sunDirectionWS: keyLight.directionWS
+            )
             let probeM = scenePlacement.materialProbeWorldMatrix(shelf: shelf)
             materialProbeRenderer?.draw(
                 encoder: encoder,
@@ -210,12 +275,7 @@ extension Renderer {
             solidPass.encodeRotatingCube(encoder: encoder, proj: proj, view: viewM, angle: angle)
         }
 
-        if let pipe = solidPass.simpleColorPipeline {
-            encoder.setDepthStencilState(skyDepthState)
-            let gizmoMVP = WorldAxesGizmo.modelViewProj(proj: proj, view: viewM)
-            debugDraw.drawWorldAxesOverlay(encoder: encoder, pipeline: pipe, modelViewProj: gizmoMVP)
-            encoder.setDepthStencilState(depthState)
-        }
+        frameEffects.encodeAllPostOpaqueDraws(encoder: encoder, context: effectContext)
 
         let axisNDCs = WorldAxesGizmo.axisLabelNDCs(proj: proj, view: viewM)
         let sink = hudSink
@@ -224,6 +284,36 @@ extension Renderer {
         }
 
         encoder.endEncoding()
+
+        sunOcularGlare.encode(
+            commandBuffer: commandBuffer,
+            drawableTexture: drawable.texture,
+            drawableAspect: aspect,
+            viewProjection: viewProj,
+            cameraPosition: camera.position,
+            sunDirectionWS: keyLight.directionWS,
+            cameraForward: camera.forward
+        )
+
+        let overlayDesc = MTLRenderPassDescriptor()
+        overlayDesc.colorAttachments[0].texture = drawable.texture
+        overlayDesc.colorAttachments[0].loadAction = .load
+        overlayDesc.colorAttachments[0].storeAction = .store
+        if let depthTexture {
+            overlayDesc.depthAttachment.texture = depthTexture
+            overlayDesc.depthAttachment.loadAction = .load
+            overlayDesc.depthAttachment.storeAction = .dontCare
+        }
+
+        if let pipe = solidPass.simpleColorPipeline,
+           depthTexture != nil,
+           let overlayEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: overlayDesc)
+        {
+            overlayEncoder.setDepthStencilState(skyDepthState)
+            let gizmoMVP = WorldAxesGizmo.modelViewProj(proj: proj, view: viewM)
+            debugDraw.drawWorldAxesOverlay(encoder: overlayEncoder, pipeline: pipe, modelViewProj: gizmoMVP)
+            overlayEncoder.endEncoding()
+        }
         commandBuffer.present(drawable)
         commandBuffer.commit()
 

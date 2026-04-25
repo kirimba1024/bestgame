@@ -42,6 +42,23 @@ extension Renderer {
                 environment: environmentMap
             )
         }
+        if grassRenderer == nil {
+            grassRenderer = GrassInstancedRenderer(device: device)
+        }
+        grassRenderer?.buildPipelineIfNeeded(
+            library: library,
+            colorPixelFormat: view.colorPixelFormat,
+            depthPixelFormat: view.depthStencilPixelFormat
+        )
+        if riverWaterRenderer == nil {
+            riverWaterRenderer = RiverWaterRenderer(device: device)
+        }
+        riverWaterRenderer?.buildPipelineIfNeeded(
+            device: device,
+            library: library,
+            colorPixelFormat: view.colorPixelFormat,
+            depthPixelFormat: view.depthStencilPixelFormat
+        )
         if materialProbeRenderer == nil {
             materialProbeRenderer = StaticModelRenderer(
                 device: device,
@@ -61,6 +78,15 @@ extension Renderer {
                 depthPixelFormat: view.depthStencilPixelFormat
             )
         }
+
+        frameEffects.buildAllIfNeeded(
+            device: device,
+            library: library,
+            colorPixelFormat: view.colorPixelFormat,
+            depthPixelFormat: view.depthStencilPixelFormat
+        )
+
+        sunOcularGlare.buildIfNeeded(library: library, drawablePixelFormat: view.colorPixelFormat)
 
         if skinnedRenderers.count != pendingSkinnedModels.count {
             skinnedRenderers.removeAll(keepingCapacity: true)
@@ -103,7 +129,7 @@ extension Renderer {
             height: height,
             mipmapped: false
         )
-        desc.usage = [.renderTarget]
+        desc.usage = [.renderTarget, .shaderRead]
         desc.storageMode = .private
         depthTexture = device.makeTexture(descriptor: desc)
     }
