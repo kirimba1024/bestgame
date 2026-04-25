@@ -44,5 +44,39 @@ enum PBRTypes {
             self.debugMode = debugMode
         }
     }
+
+    /// Must match `PBRInstancedUniforms` in `MetalShaders/ShaderShared.h` byte-for-byte.
+    struct InstancedUniforms {
+        var viewProj: simd_float4x4
+        var lightViewProj: simd_float4x4
+        var cameraPosWS: SIMD3<Float>
+        var _p0: UInt32 = 0
+        var baseColorFactor: SIMD4<Float>
+        var metallicFactor: Float
+        var roughnessFactor: Float
+        var exposure: Float
+        var debugMode: UInt32 = 0
+        var _pad: SIMD3<Float> = .zero
+
+        init(
+            viewProj: simd_float4x4,
+            lightViewProj: simd_float4x4,
+            cameraPosWS: SIMD3<Float>,
+            baseColorFactor: SIMD4<Float>,
+            metallicFactor: Float,
+            roughnessFactor: Float,
+            exposure: Float = 1.0,
+            debugMode: UInt32 = 0
+        ) {
+            self.viewProj = viewProj
+            self.lightViewProj = lightViewProj
+            self.cameraPosWS = cameraPosWS
+            self.baseColorFactor = baseColorFactor
+            self.metallicFactor = metallicFactor
+            self.roughnessFactor = roughnessFactor
+            self.exposure = exposure
+            self.debugMode = debugMode
+        }
+    }
 }
 

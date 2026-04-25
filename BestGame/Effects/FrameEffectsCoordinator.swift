@@ -4,12 +4,14 @@ import MetalKit
 /// Собирает эффекты в фиксированном порядке: рендерер только строит контекст и делегирует сюда.
 final class FrameEffectsCoordinator {
     private let effects: [GPUFrameEffect]
+    private let effectsByDrawOrder: [GPUFrameEffect]
 
     init(device: MTLDevice) {
         effects = [
             ParticleBurstPass(device: device),
             FireflyDriftPass(device: device),
         ]
+        effectsByDrawOrder = effects.sorted(by: { $0.compositeDrawOrder < $1.compositeDrawOrder })
     }
 
     func buildAllIfNeeded(
@@ -35,7 +37,7 @@ final class FrameEffectsCoordinator {
     }
 
     func encodeAllPostOpaqueDraws(encoder: MTLRenderCommandEncoder, context: FrameEffectContext) {
-        for e in effects.sorted(by: { $0.compositeDrawOrder < $1.compositeDrawOrder }) {
+        for e in effectsByDrawOrder {
             e.encodeDraw(encoder: encoder, context: context)
         }
     }

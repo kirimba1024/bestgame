@@ -55,6 +55,21 @@ struct PBRUniforms {
     float3 _pad;
 };
 
+// Instanced variant for static foliage/props.
+// Assumes uniform scale (normals use model's upper-left 3x3).
+struct PBRInstancedUniforms {
+    float4x4 viewProj;
+    float4x4 lightViewProj;
+    float3 cameraPosWS;
+    uint _p0;
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    float exposure;
+    uint debugMode;
+    float3 _pad;
+};
+
 struct PBRVertexOut {
     float4 position [[position]];
     float2 uv;
@@ -88,6 +103,10 @@ struct ShadowUniforms {
     float4x4 model;
     uint jointCount;
     float3 _pad0;
+};
+
+struct ShadowInstancedUniforms {
+    float4x4 lightViewProj;
 };
 
 inline float3 skyColor(float3 dir, float3 sunDirWS, float3 sunDiskRadianceHDR) {

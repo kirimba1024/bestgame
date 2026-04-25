@@ -35,22 +35,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     let frameEffects: FrameEffectsCoordinator
     let sunOcularGlare: SunOcularGlarePass
 
-    // MARK: - Scene (lazy GPU wrappers)
-
-    var skinnedRenderers: [SkinnedModelRenderer] = []
-    var pendingSkinnedModels: [GLBSkinnedModel] = []
-    /// Имена скиннутых ассетов (порядок = слоты на полке; стиль слота — `scenePlacement.skinnedStyle`).
-    var skinnedPBRAssetNames: [String] = []
-    var pendingStaticPBRModels: [GLBStaticModel] = []
-    var staticPBRAssetNames: [String] = []
-    /// Параллельно `staticPBRRenderers`: крупный масштаб и подъём как у шлема.
-    var staticSlotHeroScale: [Bool] = []
-    var staticPBRRenderers: [StaticModelRenderer] = []
-    /// Пол и сферы-пробы вне ряда слотов (отдельные матрицы).
-    var groundPlaneRenderer: StaticModelRenderer?
-    var materialProbeRenderer: StaticModelRenderer?
-    var grassRenderer: GrassInstancedRenderer?
-    var riverWaterRenderer: RiverWaterRenderer?
+    // MARK: - Scene selection
+    let scene: RenderScene
 
     // MARK: - HUD / debug
 
@@ -58,10 +44,6 @@ final class Renderer: NSObject, MTKViewDelegate {
     var hudAccum: Float = 0
     var hudFrames: Int = 0
     let debugShowShadowFactor = false
-
-    // MARK: - Layout
-
-    let scenePlacement: ScenePlacementProviding
 
     // MARK: - Life cycle
 
@@ -82,22 +64,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         environmentMap = EnvironmentMap(device: device, commandQueue: commandQueue)
         shadowMap = ShadowMapRenderer(device: device)
         camera = FlyCamera()
-        scenePlacement = DemoScenePlacementProvider()
         frameEffects = FrameEffectsCoordinator(device: device)
         sunOcularGlare = SunOcularGlarePass(device: device)
+        scene = WorldScene()
 
         super.init()
 
-        let demo = DemoAssetsLoader.loadDefaultScene()
-        pendingStaticPBRModels = demo.pendingStaticPBRModels
-        staticPBRAssetNames = demo.staticPBRAssetNames
-        staticSlotHeroScale = demo.staticSlotIsHeroScale
-        pendingSkinnedModels = demo.pendingSkinnedModels
-        skinnedPBRAssetNames = demo.skinnedPBRAssetNames
-        if let mesh = demo.foxStaticMesh {
-            solidPass.uploadFoxDebugMesh(mesh)
-        }
-        modelDebugLine = demo.modelDebugLine
+        modelDebugLine = scene.hudLine
     }
 
     func updateInput(_ input: InputState) {
@@ -105,8 +78,6 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     var hasRenderableScene: Bool {
-        !staticPBRRenderers.isEmpty
-            || !skinnedRenderers.isEmpty
-            || (solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0)
+        true
     }
 }

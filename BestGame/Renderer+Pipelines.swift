@@ -17,58 +17,13 @@ extension Renderer {
             depthPixelFormat: view.depthStencilPixelFormat
         )
 
-        if staticPBRRenderers.isEmpty {
-            for m in pendingStaticPBRModels {
-                staticPBRRenderers.append(
-                    StaticModelRenderer(
-                        device: device,
-                        library: library,
-                        colorPixelFormat: view.colorPixelFormat,
-                        depthPixelFormat: view.depthStencilPixelFormat,
-                        model: m,
-                        environment: environmentMap
-                    )
-                )
-            }
-        }
-
-        if groundPlaneRenderer == nil {
-            groundPlaneRenderer = StaticModelRenderer(
-                device: device,
-                library: library,
-                colorPixelFormat: view.colorPixelFormat,
-                depthPixelFormat: view.depthStencilPixelFormat,
-                model: DemoProceduralGeometry.groundPlaneModel(),
-                environment: environmentMap
-            )
-        }
-        if grassRenderer == nil {
-            grassRenderer = GrassInstancedRenderer(device: device)
-        }
-        grassRenderer?.buildPipelineIfNeeded(
-            library: library,
-            colorPixelFormat: view.colorPixelFormat,
-            depthPixelFormat: view.depthStencilPixelFormat
-        )
-        if riverWaterRenderer == nil {
-            riverWaterRenderer = RiverWaterRenderer(device: device)
-        }
-        riverWaterRenderer?.buildPipelineIfNeeded(
+        scene.buildIfNeeded(
             device: device,
             library: library,
             colorPixelFormat: view.colorPixelFormat,
-            depthPixelFormat: view.depthStencilPixelFormat
+            depthPixelFormat: view.depthStencilPixelFormat,
+            environment: environmentMap
         )
-        if materialProbeRenderer == nil {
-            materialProbeRenderer = StaticModelRenderer(
-                device: device,
-                library: library,
-                colorPixelFormat: view.colorPixelFormat,
-                depthPixelFormat: view.depthStencilPixelFormat,
-                model: DemoProceduralGeometry.materialProbeSpheresModel(),
-                environment: environmentMap
-            )
-        }
 
         if skyRenderer == nil {
             skyRenderer = SkyRenderer(
@@ -87,22 +42,6 @@ extension Renderer {
         )
 
         sunOcularGlare.buildIfNeeded(library: library, drawablePixelFormat: view.colorPixelFormat)
-
-        if skinnedRenderers.count != pendingSkinnedModels.count {
-            skinnedRenderers.removeAll(keepingCapacity: true)
-            for model in pendingSkinnedModels {
-                skinnedRenderers.append(
-                    SkinnedModelRenderer(
-                        device: device,
-                        library: library,
-                        colorPixelFormat: view.colorPixelFormat,
-                        depthPixelFormat: view.depthStencilPixelFormat,
-                        model: model,
-                        environment: environmentMap
-                    )
-                )
-            }
-        }
 
         let depthDesc = MTLDepthStencilDescriptor()
         depthDesc.depthCompareFunction = .less

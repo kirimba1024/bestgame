@@ -4,10 +4,10 @@ import simd
 enum WorldAxesGizmo {
     /// Длина полуоси в **локальном** пространстве гизмо (совпадает с `DebugDraw`).
     /// Должно совпадать с полуосью в `DebugDraw` (вершины осей).
-    private static let axisHalfLengthLocal: Float = 0.22
+    private static let axisHalfLengthLocal: Float = 0.20
 
     private enum Layout {
-        static let gizmoScale: Float = 0.46
+        static let gizmoScale: Float = 0.44
         /// Точка в **пространстве камеры** (`view * world` даёт эти координаты):
         /// −x влево на экране, −y ниже центра (под блок FPS), −z вперёд по взгляду (RH).
         static let viewSpaceAnchor = SIMD3<Float>(-0.88, 0.24, -1.02)

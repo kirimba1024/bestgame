@@ -140,6 +140,60 @@ final class GrassInstancedRenderer {
         instanceCount = count
     }
 
+    /// Заполняет инстансы для world-terrain: по высоте `TerrainRenderer.height`, с вырезом под спавн-площадку и озеро.
+    func ensureInstancesOnTerrain(terrain: TerrainSampler) {
+        // Use a separate version gate so edits to world layout don't require bumping demo layout version.
+        let worldVersion: UInt32 = 1
+        if filledGrassLayoutVersion == worldVersion, instanceCount > 0 { return }
+        filledGrassLayoutVersion = worldVersion
+
+        let half = terrain.config.halfSizeXZ * 0.92
+        let nx = 320
+        let nz = 320
+        var count = 0
+        let ptr = instanceBuffer.contents().assumingMemoryBound(to: SIMD4<Float>.self)
+
+        // Match the flat spawn pad radius in `TerrainRenderer.height`.
+        let spawnCut: Float = 22.0
+        // Lake area (see TerrainRenderer’s lake depression below).
+        let lakeCenter = SIMD2<Float>(32, -18)
+        let lakeCut: Float = 18.0
+
+        outer: for j in 0..<nz {
+            for i in 0..<nx {
+                if count >= Self.maxInstances { break outer }
+                let fi = Float(i), fj = Float(j)
+                let h1 = GrassInstancedRenderer.stableHash2D(fi, fj, seed: 1)
+                let h2 = GrassInstancedRenderer.stableHash2D(fi, fj, seed: 3)
+                let u = (fi + h1) / Float(nx)
+                let v = (fj + h2) / Float(nz)
+                let x = (-half + u * (2 * half))
+                let z = (-half + v * (2 * half))
+
+                let p = SIMD2<Float>(x, z)
+                if length(p) < spawnCut { continue }
+                if length(p - lakeCenter) < lakeCut { continue }
+
+                let y = terrain.height(x: x, z: z)
+                if !y.isFinite { continue }
+
+                // Density mask: keep it stable and reasonably sparse near steep slopes.
+                let n = terrain.normal(x: x, z: z, step: 1.2)
+                let slope01 = min(1, max(0, 1 - n.y))
+                let density = 0.78 - slope01 * 0.55
+                if GrassInstancedRenderer.stableHash2D(fi, fj, seed: 9) > density { continue }
+
+                let wy = y + 0.02 + GrassInstancedRenderer.stableHash2D(fi, fj, seed: 7) * 0.018
+                let h3 = GrassInstancedRenderer.stableHash2D(fi, fj, seed: 11)
+                let seedMix = h1 * 0.618 + h2 * 0.379 + h3
+                let seed = seedMix - floor(seedMix)
+                ptr[count] = SIMD4(x, wy, z, seed)
+                count += 1
+            }
+        }
+        instanceCount = count
+    }
+
     private static func stableHash2D(_ i: Float, _ j: Float, seed: Float) -> Float {
         let x = sin(i * 12.9898 + j * 78.233 + seed * 45.164) * 43758.5453
         return x - floor(x)
@@ -160,7 +214,8 @@ final class GrassInstancedRenderer {
             viewProj: viewProj,
             cam_time: SIMD4(cameraPos.x, cameraPos.y, cameraPos.z, time),
             sun_wind: SIMD4(sun.x, sun.y, sun.z, wind),
-            blade: SIMD4(0.044, 1.02, 0.14, 0)
+            // Back to readable height and visible sway.
+            blade: SIMD4(0.085, 2.2, 0.14, 0)
         )
         uniformBuffer.contents().assumingMemoryBound(to: GrassUniforms.self).pointee = u
 

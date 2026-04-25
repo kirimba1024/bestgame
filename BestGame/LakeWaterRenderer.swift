@@ -2,42 +2,13 @@ import Metal
 import MetalKit
 import simd
 
-/// Узкая «река» по полу: одна сетка, волны в VS, IBL + пена по depth — без дорогого захвата цвета кадра.
-final class RiverWaterRenderer {
-
-    /// Общая геометрия полосы (мир), чтобы трава не застилала воду.
-    enum RiverStrip {
-        static let surfaceY: Float = 0.056
-        static let halfWidthX: Float = 5.6
-        static let lengthZScale: Float = 1.75
-
-        static func centerXZ(shelf: DemoScenePlacements.ShelfFrame, config: DemoScenePlacements.Config) -> SIMD2<Float> {
-            let cx = (shelf.slotSpanMinX + shelf.slotSpanMaxX) * 0.5
-            let halfW = max(18, (shelf.slotSpanMaxX - shelf.slotSpanMinX) * 0.5 + config.groundMarginX)
-            let posX = cx - halfW * 0.72
-            return SIMD2(posX, config.sceneDepthZ)
-        }
-
-        static func halfLengthZ(config: DemoScenePlacements.Config) -> Float {
-            config.groundHalfDepthZ * lengthZScale
-        }
-
-        static func modelMatrix(shelf: DemoScenePlacements.ShelfFrame, config: DemoScenePlacements.Config) -> simd_float4x4 {
-            let c = centerXZ(shelf: shelf, config: config)
-            let hz = halfLengthZ(config: config)
-            let sx = halfWidthX * 2
-            let sz = hz * 2
-            return simd_float4x4.translation(SIMD3(c.x, surfaceY, c.y))
-                * simd_float4x4.scale(SIMD3(sx, 1, sz))
-        }
-
-        /// Точка на полу (XZ) попадает в полосу реки — не ставим траву.
-        static func suppressGrass(worldX: Float, worldZ: Float, shelf: DemoScenePlacements.ShelfFrame, config: DemoScenePlacements.Config) -> Bool {
-            let c = centerXZ(shelf: shelf, config: config)
-            let hz = halfLengthZ(config: config)
-            let margin: Float = 1.08
-            return abs(worldX - c.x) < halfWidthX * margin && abs(worldZ - c.y) < hz * margin
-        }
+/// Озеро фиксированного размера в мире, использует уже существующий water shader (как река).
+final class LakeWaterRenderer {
+    struct Config {
+        var center: SIMD2<Float> = SIMD2(32, -18) // XZ
+        // Raised so it's clearly visible above the carved lake bowl.
+        var surfaceY: Float = -0.9
+        var halfSize: Float = 22.0
     }
 
     private struct WaterVertex {
@@ -45,6 +16,7 @@ final class RiverWaterRenderer {
         var uv: SIMD2<Float>
     }
 
+    // Must match WaterUniforms in WaterRiver.metal
     private struct WaterUniforms {
         var viewProj: simd_float4x4
         var model: simd_float4x4
@@ -56,6 +28,9 @@ final class RiverWaterRenderer {
         var nearFarInvWInvH: SIMD4<Float>
     }
 
+    private let device: MTLDevice
+    private let cfg: Config
+
     private var pipeline: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
     private let vertexBuffer: MTLBuffer
@@ -63,9 +38,12 @@ final class RiverWaterRenderer {
     private let uniformBuffer: MTLBuffer
     private let indexCount: Int
 
-    init(device: MTLDevice) {
-        let nx = 52
-        let nz = 40
+    init(device: MTLDevice, config: Config = .init()) {
+        self.device = device
+        self.cfg = config
+
+        let nx = 72
+        let nz = 72
         var verts: [WaterVertex] = []
         verts.reserveCapacity((nx + 1) * (nz + 1))
         for j in 0...nz {
@@ -87,6 +65,7 @@ final class RiverWaterRenderer {
                 idx.append(contentsOf: [i0, i1, i2, i0, i2, i3])
             }
         }
+
         indexCount = idx.count
         vertexBuffer = device.makeBuffer(bytes: verts, length: verts.count * MemoryLayout<WaterVertex>.stride, options: .storageModeShared)!
         indexBuffer = device.makeBuffer(bytes: idx, length: idx.count * MemoryLayout<UInt32>.stride, options: .storageModeShared)!
@@ -115,7 +94,7 @@ final class RiverWaterRenderer {
         vd.layouts[0].stepFunction = .perVertex
 
         let pd = MTLRenderPipelineDescriptor()
-        pd.label = "RiverWater"
+        pd.label = "LakeWater"
         pd.vertexFunction = vs
         pd.fragmentFunction = fs
         pd.vertexDescriptor = vd
@@ -146,8 +125,6 @@ final class RiverWaterRenderer {
         sunDirectionWS: SIMD3<Float>,
         viewportWidth: Float,
         viewportHeight: Float,
-        shelf: DemoScenePlacements.ShelfFrame,
-        config: DemoScenePlacements.Config,
         depthTexture: MTLTexture,
         environmentTexture: MTLTexture,
         environmentSampler: MTLSamplerState,
@@ -155,7 +132,9 @@ final class RiverWaterRenderer {
     ) {
         guard let pipeline, let depthState else { return }
 
-        let model = RiverStrip.modelMatrix(shelf: shelf, config: config)
+        let model =
+            simd_float4x4.translation(SIMD3(cfg.center.x, cfg.surfaceY, cfg.center.y))
+            * simd_float4x4.scale(SIMD3(cfg.halfSize * 2, 1, cfg.halfSize * 2))
         let normalMatrix = model.inverse.transpose
         let sun = length(sunDirectionWS) > 1e-5 ? normalize(sunDirectionWS) : SIMD3<Float>(0.38, 0.92, 0.28)
         var u = WaterUniforms(
@@ -163,8 +142,8 @@ final class RiverWaterRenderer {
             model: model,
             normalMatrix: normalMatrix,
             camAndTime: SIMD4(cameraPos.x, cameraPos.y, cameraPos.z, time),
-            sunAndFlow: SIMD4(sun.x, sun.y, sun.z, time * 0.15),
-            foamStrength: 1.0,
+            sunAndFlow: SIMD4(sun.x, sun.y, sun.z, time * 0.10),
+            foamStrength: 0.0,
             nearFarInvWInvH: SIMD4(
                 RendererFrameTiming.depthNear,
                 RendererFrameTiming.depthFar,
@@ -177,6 +156,7 @@ final class RiverWaterRenderer {
         var key = keyLightBytes
         encoder.setRenderPipelineState(pipeline)
         encoder.setDepthStencilState(depthState)
+        encoder.setCullMode(.none)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
         encoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
@@ -191,5 +171,7 @@ final class RiverWaterRenderer {
             indexBuffer: indexBuffer,
             indexBufferOffset: 0
         )
+        encoder.setCullMode(.back)
     }
 }
+

@@ -140,6 +140,23 @@ vertex BurstVertexOut burst_billboard_vs(
     }
 
     float s = p.size * (0.65 + 0.35 * p.life);
+    
+    // Near-plane guard for billboards: if the quad intersects the near plane,
+    // hardware clipping can "slice" triangles depending on camera position.
+    // Fade + slightly shrink when too close to the camera.
+    float4 centerClip = du.viewProj * float4(p.position, 1.0);
+    float dist = centerClip.w; // ~ -viewZ for this RH projection
+    if (dist <= 1e-4) {
+        out.position = float4(0.0, 0.0, 2.0, 1.0);
+        out.color = float4(0.0);
+        out.uv = texUV;
+        return out;
+    }
+    float guard = max(0.02, s * 1.35);
+    float k = saturate((dist - guard) / max(1e-4, guard));
+    s *= (0.35 + 0.65 * k);
+    p.color.a *= k;
+
     float3 world = p.position + du.cameraRight * (corner.x * s) + du.cameraUp * (corner.y * s);
     out.position = du.viewProj * float4(world, 1.0);
     out.color = float4(p.color.rgb, p.color.a);

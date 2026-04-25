@@ -15,24 +15,8 @@ extension Renderer {
             rebuildDepthTextureIfNeeded(for: view, size: view.drawableSize)
         }
 
-        let now = CACurrentMediaTime()
-        let elapsed = Float(max(0, now - lastFrameTime))
-        let dt = min(RendererFrameTiming.maxDeltaTimeSeconds, elapsed)
-        lastFrameTime = now
-        camera.update(dt: dt, input: input)
-
-        hudAccum += dt
-        hudFrames += 1
-        if hudAccum >= RendererFrameTiming.hudRefreshIntervalSeconds, let hud = hudSink {
-            hud.setHUDText(RendererHUDFormatting.formatHUDText(
-                fps: Float(hudFrames) / max(1e-6, hudAccum),
-                frameMs: (hudAccum / Float(hudFrames)) * 1000,
-                drawableSize: view.drawableSize,
-                modelLine: modelDebugLine
-            ))
-            hudAccum = 0
-            hudFrames = 0
-        }
+        let step = stepFrame(now: CACurrentMediaTime())
+        updateHUD(dt: step.dt, drawableSize: view.drawableSize)
 
         guard
             let renderPassDescriptor = view.currentRenderPassDescriptor,
@@ -53,72 +37,16 @@ extension Renderer {
             renderPassDescriptor.depthAttachment.storeAction = .store
         }
 
-        let time = Float(now - startTime)
-        let angle = time * RendererFrameTiming.cubeRotationMultiplier
+        let mats = makeViewMatrices(drawableSize: view.drawableSize)
 
-        let aspect = max(1e-3, Float(view.drawableSize.width / max(view.drawableSize.height, 1)))
-        let proj = simd_float4x4.perspectiveRH(
-            fovyRadians: RendererFrameTiming.verticalFieldOfViewRadians,
-            aspect: aspect,
-            nearZ: RendererFrameTiming.depthNear,
-            farZ: RendererFrameTiming.depthFar
-        )
-        let viewM = camera.viewMatrix()
-        let viewProj = proj * viewM
-
-        let keyLight = SceneLighting.keyLight(atTime: time)
-        let shelf = scenePlacement.computeShelfFrame(
-            staticAssetNames: staticPBRAssetNames,
-            staticHeroScale: staticSlotHeroScale,
-            staticRendererCount: staticPBRRenderers.count,
-            skinnedAssetNames: skinnedPBRAssetNames,
-            skinnedRendererCount: skinnedRenderers.count,
-            hasFoxMeshFallback: solidPass.glbVertexBuffer != nil && solidPass.glbIndexCount > 0
-        )
-
-        let showcaseFocal: SIMD3<Float>
-        let effectsAnchor: SIMD3<Float>
-        if hasRenderableScene {
-            let cx = (shelf.slotSpanMinX + shelf.slotSpanMaxX) * 0.5
-            let z = scenePlacement.shelfConfig.sceneDepthZ + 4.3
-            showcaseFocal = SIMD3(
-                cx + sin(time * 0.95) * 2.4,
-                4.05 + sin(time * 1.25) * 0.45,
-                z + cos(time * 0.72) * 1.6
-            )
-            // Вбок от полки по +X за крайний слот — частицы/светлячки.
-            let lateral = shelf.slotSpanMaxX + 22
-            effectsAnchor = SIMD3(
-                lateral,
-                showcaseFocal.y - 0.6,
-                showcaseFocal.z - 7
-            )
-        } else {
-            showcaseFocal = SIMD3(sin(time * 0.9) * 1.2, 1.85 + sin(time * 1.1) * 0.2, -4.2 + cos(time * 0.5) * 0.35)
-            effectsAnchor = showcaseFocal + SIMD3(6, 0, -3)
-        }
-
-        let camRight = normalize(SIMD3<Float>(viewM.columns.0.x, viewM.columns.0.y, viewM.columns.0.z))
-        let camUp = normalize(SIMD3<Float>(viewM.columns.1.x, viewM.columns.1.y, viewM.columns.1.z))
-        let effectContext = FrameEffectContext(
-            time: time,
-            deltaTime: dt,
-            viewProjection: viewProj,
-            viewMatrix: viewM,
-            projectionMatrix: proj,
-            cameraPosition: camera.position,
-            cameraRight: camRight,
-            cameraUp: camUp,
-            showcaseFocalPoint: showcaseFocal,
-            effectsAnchorPoint: effectsAnchor,
-            hasSceneContent: hasRenderableScene
-        )
+        let keyLight = SceneLighting.keyLight(atTime: step.time)
+        let effectContext = makeEffectContext(step: step, mats: mats)
         frameEffects.encodeAllCompute(into: commandBuffer, context: effectContext)
 
-        let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS, shelf: shelf, time: time)
+        let lightViewProj = makeLightViewProj(sunDir: keyLight.directionWS)
 
         shadowMap.render(into: commandBuffer) { encoder in
-            drawShadowCasters(encoder: encoder, lightViewProj: lightViewProj, time: time, shelf: shelf)
+            drawShadowCasters(encoder: encoder, lightViewProj: lightViewProj, time: step.time)
         }
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
@@ -127,157 +55,47 @@ extension Renderer {
         }
 
         encoder.setDepthStencilState(depthState)
-
-        if let skyRenderer {
-            encoder.setDepthStencilState(skyDepthState)
-            skyRenderer.draw(
-                encoder: encoder,
-                uniforms: .init(
-                    invViewProj: viewProj.inverse,
-                    cameraPosWS: camera.position,
-                    sunDirWS: keyLight.directionWS,
-                    sunDiskRadianceHDR: SceneLighting.hdrSunRadiance
-                )
-            )
-            encoder.setDepthStencilState(depthState)
-        }
+        drawSkyIfNeeded(encoder: encoder, mats: mats, keyLight: keyLight)
+        applyBaseRasterState(encoder)
 
         let debugMode: UInt32 = debugShowShadowFactor ? 1 : 0
 
         if hasRenderableScene {
-            for (index, staticRenderer) in staticPBRRenderers.enumerated() {
-                let assetName = index < staticPBRAssetNames.count ? staticPBRAssetNames[index] : ""
-                let modelM = scenePlacement.staticWorldModelMatrix(
-                    base: shelf.staticModelMatrices[index],
-                    assetName: assetName,
-                    time: time
-                )
-                staticRenderer.draw(
-                    encoder: encoder,
-                    params: .init(
-                        proj: proj,
-                        view: viewM,
-                        cameraPosWS: camera.position,
-                        model: modelM,
-                        lightViewProj: lightViewProj,
-                        keyLight: keyLight,
-                        shadowTexture: shadowMap.texture,
-                        shadowSampler: shadowMap.compareSampler,
-                        debugMode: debugMode
-                    )
-                )
-            }
-
-            for (idx, skinned) in skinnedRenderers.enumerated() {
-                guard idx < shelf.skinnedSlotCentersX.count, idx < shelf.skinnedSlotBaseZ.count else { continue }
-                let cx = shelf.skinnedSlotCentersX[idx]
-                let baseZ = shelf.skinnedSlotBaseZ[idx]
-                let assetName = idx < skinnedPBRAssetNames.count ? skinnedPBRAssetNames[idx] : ""
-                let style = scenePlacement.skinnedStyle(assetName: assetName)
-                let baseY = scenePlacement.shelfConfig.heroRestHeightY + style.extraLiftY
-                let origin = SIMD3(cx, baseY, baseZ)
-                let baseParams = SkinnedModelRenderer.DrawParams(
-                    proj: proj,
-                    view: viewM,
-                    cameraPosWS: camera.position,
-                    time: time,
-                    modelTranslation: .zero,
-                    modelScale: style.modelScale,
-                    modelBasisRotation: style.modelBasisRotation,
-                    lightViewProj: lightViewProj,
-                    keyLight: keyLight,
-                    shadowTexture: shadowMap.texture,
-                    shadowSampler: shadowMap.compareSampler,
-                    debugMode: debugMode
-                )
-                if style.useInstancingGrid {
-                    let grid = scenePlacement.foxInstancingGrid(origin: origin)
-                    skinned.drawInstances(encoder: encoder, baseParams: baseParams, translations: grid)
-                } else {
-                    var one = baseParams
-                    one.modelTranslation = origin
-                    skinned.draw(encoder: encoder, params: one)
-                }
-            }
-
-            if skinnedRenderers.isEmpty, let foxX = shelf.foxMeshDebugSlotCenterX, solidPass.glbIndexCount > 0 {
-                let foxY = scenePlacement.shelfConfig.heroRestHeightY + scenePlacement.shelfConfig.foxGridExtraLiftY
-                let baseT = simd_float4x4.translation([0, foxY, scenePlacement.shelfConfig.sceneDepthZ])
-                let model =
-                    baseT
-                    * simd_float4x4.translation([foxX, 0, 0])
-                    * simd_float4x4.scale([4, 4, 4])
-                    * simd_float4x4.rotation(radians: .pi, axis: [0, 1, 0])
-                _ = solidPass.encodeGLBFallbackIfReady(
-                    encoder: encoder,
-                    proj: proj,
-                    view: viewM,
-                    modelMatrix: model
-                )
-            }
-
-            let groundM = scenePlacement.groundWorldMatrix(shelf: shelf)
-            groundPlaneRenderer?.draw(
+            scene.draw(
                 encoder: encoder,
-                params: .init(
-                    proj: proj,
-                    view: viewM,
-                    cameraPosWS: camera.position,
-                    model: groundM,
-                    lightViewProj: lightViewProj,
-                    keyLight: keyLight,
-                    shadowTexture: shadowMap.texture,
-                    shadowSampler: shadowMap.compareSampler,
-                    debugMode: debugMode
-                )
-            )
-            if let depthTexture, let river = riverWaterRenderer {
-                river.draw(
-                    encoder: encoder,
-                    viewProj: viewProj,
-                    cameraPos: camera.position,
-                    time: time,
-                    sunDirectionWS: keyLight.directionWS,
-                    viewportWidth: Float(view.drawableSize.width),
-                    viewportHeight: Float(view.drawableSize.height),
-                    shelf: shelf,
-                    config: scenePlacement.shelfConfig,
-                    depthTexture: depthTexture,
-                    environmentTexture: environmentMap.texture,
-                    environmentSampler: environmentMap.sampler,
-                    keyLightBytes: SceneLighting.KeyLightGPUBytes(keyLight)
-                )
-            }
-            grassRenderer?.ensureInstances(shelf: shelf, config: scenePlacement.shelfConfig)
-            grassRenderer?.draw(
-                encoder: encoder,
-                viewProj: viewProj,
+                proj: mats.proj,
+                view: mats.view,
+                viewProj: mats.viewProj,
+                lightViewProj: lightViewProj,
                 cameraPos: camera.position,
-                time: time,
-                sunDirectionWS: keyLight.directionWS
+                time: step.time,
+                keyLight: keyLight,
+                shadowTexture: shadowMap.texture,
+                shadowSampler: shadowMap.compareSampler,
+                environment: environmentMap,
+                depthTexture: depthTexture,
+                drawableSize: view.drawableSize
             )
-            let probeM = scenePlacement.materialProbeWorldMatrix(shelf: shelf)
-            materialProbeRenderer?.draw(
+            // Restore default depth state for anything else (effects overlay, etc.).
+            encoder.setDepthStencilState(depthState)
+            applyBaseRasterState(encoder)
+
+            // Keep basic primitives visible even in world mode (useful for debugging / sanity checks).
+            solidPass.encodeRotatingCube(
                 encoder: encoder,
-                params: .init(
-                    proj: proj,
-                    view: viewM,
-                    cameraPosWS: camera.position,
-                    model: probeM,
-                    lightViewProj: lightViewProj,
-                    keyLight: keyLight,
-                    shadowTexture: shadowMap.texture,
-                    shadowSampler: shadowMap.compareSampler,
-                    debugMode: debugMode
-                )
+                proj: mats.proj,
+                view: mats.view,
+                angle: step.angle,
+                translation: SIMD3<Float>(-36, 16, -40),
+                scale: 2.2
             )
         } else {
-            solidPass.encodeRotatingCube(encoder: encoder, proj: proj, view: viewM, angle: angle)
+            solidPass.encodeRotatingCube(encoder: encoder, proj: mats.proj, view: mats.view, angle: step.angle)
         }
 
         frameEffects.encodeAllPostOpaqueDraws(encoder: encoder, context: effectContext)
 
-        let axisNDCs = WorldAxesGizmo.axisLabelNDCs(proj: proj, view: viewM)
+        let axisNDCs = WorldAxesGizmo.axisLabelNDCs(proj: mats.proj, view: mats.view)
         let sink = hudSink
         DispatchQueue.main.async {
             sink?.updateAxisLegendNDCPositions(x: axisNDCs.x, y: axisNDCs.y, z: axisNDCs.z)
@@ -288,8 +106,8 @@ extension Renderer {
         sunOcularGlare.encode(
             commandBuffer: commandBuffer,
             drawableTexture: drawable.texture,
-            drawableAspect: aspect,
-            viewProjection: viewProj,
+            drawableAspect: mats.aspect,
+            viewProjection: mats.viewProj,
             cameraPosition: camera.position,
             sunDirectionWS: keyLight.directionWS,
             cameraForward: camera.forward
@@ -310,7 +128,7 @@ extension Renderer {
            let overlayEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: overlayDesc)
         {
             overlayEncoder.setDepthStencilState(skyDepthState)
-            let gizmoMVP = WorldAxesGizmo.modelViewProj(proj: proj, view: viewM)
+            let gizmoMVP = WorldAxesGizmo.modelViewProj(proj: mats.proj, view: mats.view)
             debugDraw.drawWorldAxesOverlay(encoder: overlayEncoder, pipeline: pipe, modelViewProj: gizmoMVP)
             overlayEncoder.endEncoding()
         }

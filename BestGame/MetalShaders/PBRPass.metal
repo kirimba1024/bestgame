@@ -51,6 +51,14 @@ vertex float4 vertex_shadow_static(StaticVertexIn in [[stage_in]],
     return u.lightViewProj * posWS;
 }
 
+vertex float4 vertex_shadow_static_instanced(StaticVertexIn in [[stage_in]],
+                                             constant ShadowInstancedUniforms& u [[buffer(1)]],
+                                             const device float4x4* models [[buffer(2)]],
+                                             uint iid [[instance_id]]) {
+    float4 posWS = models[iid] * float4(in.position, 1.0);
+    return u.lightViewProj * posWS;
+}
+
 vertex float4 vertex_shadow_skinned(SkinnedVertexIn in [[stage_in]],
                                     constant ShadowUniforms& u [[buffer(1)]],
                                     const device float4x4* jointMats [[buffer(2)]]) {
@@ -84,6 +92,23 @@ vertex PBRVertexOut vertex_static_pbr(StaticVertexIn in [[stage_in]],
     out.uv = in.uv;
     float3x3 nmat = float3x3(u.normalMatrix[0].xyz, u.normalMatrix[1].xyz, u.normalMatrix[2].xyz);
     out.normalWS = normalize(nmat * in.normal);
+    out.posWS = posWS4.xyz / max(1e-8, posWS4.w);
+    return out;
+}
+
+vertex PBRVertexOut vertex_static_pbr_instanced(StaticVertexIn in [[stage_in]],
+                                                constant PBRInstancedUniforms& u [[buffer(1)]],
+                                                const device float4x4* models [[buffer(2)]],
+                                                uint iid [[instance_id]]) {
+    float4 posOS = float4(in.position, 1.0);
+    float4x4 M = models[iid];
+    float4 posWS4 = M * posOS;
+
+    PBRVertexOut out;
+    out.position = u.viewProj * posWS4;
+    out.uv = in.uv;
+    float3x3 R = float3x3(M[0].xyz, M[1].xyz, M[2].xyz);
+    out.normalWS = normalize(R * in.normal);
     out.posWS = posWS4.xyz / max(1e-8, posWS4.w);
     return out;
 }

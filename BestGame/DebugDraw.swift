@@ -11,7 +11,7 @@ final class DebugDraw {
     private let axisVertexCount: Int
 
     init(device: MTLDevice) {
-        let L: Float = 0.22
+        let L: Float = 0.20
         let axisVertices: [Vertex] = [
             .init(position: .zero, color: [1, 0.2, 0.2]),
             .init(position: SIMD3<Float>(L, 0, 0), color: [1, 0.2, 0.2]),

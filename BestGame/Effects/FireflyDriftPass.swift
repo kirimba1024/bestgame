@@ -72,28 +72,18 @@ final class FireflyDriftPass: GPUFrameEffect {
         let kernel = library.makeFunction(name: "firefly_update_sim")!
         computePSO = try! device.makeComputePipelineState(function: kernel)
 
-        let desc = MTLRenderPipelineDescriptor()
-        desc.label = "FireflyAdditive"
-        desc.vertexFunction = library.makeFunction(name: "firefly_billboard_vs")
-        desc.fragmentFunction = library.makeFunction(name: "firefly_soft_additive_fs")
-        desc.vertexDescriptor = nil
-        desc.colorAttachments[0].pixelFormat = colorPixelFormat
-        desc.depthAttachmentPixelFormat = depthPixelFormat
-        let ca = desc.colorAttachments[0]!
-        ca.isBlendingEnabled = true
-        ca.rgbBlendOperation = .add
-        ca.sourceRGBBlendFactor = .one
-        ca.destinationRGBBlendFactor = .one
-        ca.alphaBlendOperation = .add
-        ca.sourceAlphaBlendFactor = .zero
-        ca.destinationAlphaBlendFactor = .one
+        renderPSO = try! EffectPipelineBuilders.makeAdditiveBillboardRenderPSO(
+            device: device,
+            library: library,
+            label: "FireflyAdditive",
+            vertex: "firefly_billboard_vs",
+            fragment: "firefly_soft_additive_fs",
+            colorPixelFormat: colorPixelFormat,
+            depthPixelFormat: depthPixelFormat
+        )
 
-        renderPSO = try! device.makeRenderPipelineState(descriptor: desc)
-
-        let ds = MTLDepthStencilDescriptor()
-        ds.depthCompareFunction = .less
-        ds.isDepthWriteEnabled = false
-        depthStencilState = device.makeDepthStencilState(descriptor: ds)
+        // Depth-test against the scene so glow doesn't show through opaque geometry.
+        depthStencilState = EffectPipelineBuilders.makeDepthState(device: device, compare: .lessEqual, writeEnabled: false)
     }
 
     func encodeCompute(into commandBuffer: MTLCommandBuffer, context: FrameEffectContext) {

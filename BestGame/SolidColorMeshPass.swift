@@ -123,11 +123,16 @@ final class SolidColorMeshPass {
         encoder: MTLRenderCommandEncoder,
         proj: simd_float4x4,
         view: simd_float4x4,
-        angle: Float
+        angle: Float,
+        translation: SIMD3<Float> = .zero,
+        scale: Float = 1.0
     ) {
         guard let simpleColorPipeline else { return }
         encoder.setRenderPipelineState(simpleColorPipeline)
-        let model = simd_float4x4.rotation(radians: angle, axis: [0.3, 1.0, 0.2])
+        let model =
+            simd_float4x4.translation(translation)
+            * simd_float4x4.rotation(radians: angle, axis: [0.3, 1.0, 0.2])
+            * simd_float4x4.scale(SIMD3<Float>(repeating: scale))
         let mvp = proj * view * model
         var uniforms = Uniforms(mvp: mvp)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)

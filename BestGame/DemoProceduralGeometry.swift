@@ -42,6 +42,45 @@ enum DemoProceduralGeometry {
         return GLBStaticModel(primitives: prims)
     }
 
+    /// Расширенный набор сфер-проб (больше, выше и разнообразнее), для теста материалов/теней.
+    static func materialProbeSpheresModelExtended() -> GLBStaticModel {
+        // Grid 4x3
+        let nx = 4
+        let nz = 3
+        let spacing: Float = 2.35
+        let baseY: Float = 1.15
+        let radius: Float = 1.05
+
+        let mats: [GLBPBRMaterialMR] = [
+            .init(baseColorFactor: SIMD4(0.92, 0.93, 0.95, 1), metallicFactor: 0.95, roughnessFactor: 0.10, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.85, 0.22, 0.18, 1), metallicFactor: 0.02, roughnessFactor: 0.92, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.95, 0.72, 0.28, 1), metallicFactor: 0.90, roughnessFactor: 0.34, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.20, 0.82, 0.55, 1), metallicFactor: 0.10, roughnessFactor: 0.25, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.08, 0.42, 0.98, 1), metallicFactor: 1.00, roughnessFactor: 0.55, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.75, 0.76, 0.78, 1), metallicFactor: 0.55, roughnessFactor: 0.65, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.98, 0.98, 0.98, 1), metallicFactor: 0.00, roughnessFactor: 0.05, baseColorImageData: nil, metallicRoughnessImageData: nil),
+            .init(baseColorFactor: SIMD4(0.03, 0.03, 0.03, 1), metallicFactor: 0.00, roughnessFactor: 0.98, baseColorImageData: nil, metallicRoughnessImageData: nil),
+        ]
+
+        var prims: [GLBStaticPrimitive] = []
+        prims.reserveCapacity(nx * nz)
+
+        let halfX = (Float(nx - 1) * spacing) * 0.5
+        let halfZ = (Float(nz - 1) * spacing) * 0.5
+        var k = 0
+        for iz in 0..<nz {
+            for ix in 0..<nx {
+                let cx = Float(ix) * spacing - halfX
+                let cz = Float(iz) * spacing - halfZ
+                let center = SIMD3<Float>(cx, baseY, cz)
+                let material = mats[k % mats.count]
+                prims.append(uvSpherePrimitive(center: center, radius: radius, stacks: 12, slices: 24, material: material))
+                k += 1
+            }
+        }
+        return GLBStaticModel(primitives: prims)
+    }
+
     private static func uvSpherePrimitive(
         center: SIMD3<Float>,
         radius: Float,

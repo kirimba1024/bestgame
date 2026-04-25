@@ -4,7 +4,7 @@
 
 | Текущая демо-сцена (трава, полка, лисы, HUD) | **DamagedHelmet**, крупный план | Статический PBR, небо и тени |
 | --- | --- | --- |
-| ![Полка Khronos, трава, лисы, сферы-пробы, HUD и прицел](docs/screenshot.png) | ![Шлем крупно, прицел по центру](docs/screenshot-helmet-closeup.png) | ![Крупный план модели на полу](docs/screenshot-cockpit.png) |
+| ![World: terrain + birch forest + water + витрина](docs/screenshot.png) | ![Шлем крупно, прицел по центру](docs/screenshot-helmet-closeup.png) | ![Крупный план модели на полу](docs/screenshot-cockpit.png) |
 
 ## Возможности
 
